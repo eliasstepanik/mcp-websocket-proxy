@@ -439,7 +439,7 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
   });
 
   it('keeps a session alive while it is being used', async () => {
-    const ttlHandler = upstream: local!: 400 });
+    const ttlHandler = createMcpEndpointHandler({ name: 'fake', upstream: local!, sessionIdleTtlMs: 400 });
     const server = createServer((req, res) => void ttlHandler.handle(req, res));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
