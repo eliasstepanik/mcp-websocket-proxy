@@ -19,7 +19,6 @@
  * stop dialing first (so no new request can arrive), then stop the children.
  */
 
-import { createRequire } from 'node:module';
 import { appendFileSync, existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
 
 import { LOG_MAX_BACKUPS, LOG_MAX_BYTES, type ClientConfig, type ClientLogConfig, type ClientServerConfig, type LogLevel } from './config.js';
