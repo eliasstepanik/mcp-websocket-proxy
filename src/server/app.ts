@@ -169,6 +169,7 @@ export function createApp(options: AppOptions): App {
   });
 
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     const startedAt = process.hrtime.bigint();
     // One log line per request, written when the response is finished. Only
