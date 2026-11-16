@@ -130,16 +130,6 @@ export interface ClientApp {
   close(): Promise<void>;
 }
 
-/**
- * Resolve the filesystem server's stdio entry point. It is a dependency of this
- * package, so it is launched with *this* Node binary rather than through `npx`,
- * which would need network access and a writable npm cache on the work PC.
- */
-function filesystemServerPath(): string {
-  const require = createRequire(import.meta.url);
-  return require.resolve('@modelcontextprotocol/server-filesystem/dist/index.js');
-}
-
 /** Maps a config entry onto the {@link LocalMcpServer} options for it. */
 function localOptions(entry: ClientServerConfig, log: ClientLogger): ConstructorParameters<typeof LocalMcpServer>[0] {
   const env: Record<string, string> = {};
