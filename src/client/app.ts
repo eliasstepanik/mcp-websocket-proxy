@@ -183,14 +183,26 @@ export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
   if (config.filesystem.enabled) {
     const name = config.filesystem.name;
     const stateLevel = (state: LocalServerState): LogLevel => (state === 'failed' ? 'error' : state === 'backoff' ? 'warn' : 'info');
-    servers.set(
-      name,
-      createFilesystemServer(config.filesystem, {
-        onStderrLine: (line) => log({ level: 'debug', message: 'child stderr', server: name, line }),
-        onStateChange: (state, detail) =>
-          log({ level: stateLevel(state), message: `local server ${state}`, server: name, ...(detail !== undefined ? { detail } : {}) }),
-      }),
-    );
+    // A half-installed `@modelcontextprotocol/server-filesystem` (missing package,
+    // missing `bin` file) must not stop the machine: log it and serve the servers
+    // that *are* configured.
+    try {
+      servers.set(
+        name,
+        createFilesystemServer(config.filesystem, {
+          onStderrLine: (line) => log({ level: 'debug', message: 'child stderr', server: name, line }),
+          onStateChange: (state, detail) =>
+            log({ level: stateLevel(state), message: `local server ${state}`, server: name, ...(detail !== undefined ? { detail } : {}) }),
+        }),
+      );
+    } catch (error) {
+      log({
+        level: 'error',
+        message: 'filesystem server could not be created',
+        server: name,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   log({
