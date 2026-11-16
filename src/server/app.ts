@@ -354,7 +354,6 @@ function sendUnauthorized(res: ServerResponse): void {
       error: {
         code: -32000,
         message: 'Unauthorized: a valid bearer token is required',
-        data: { source: PROXY_ERROR_SOURCE, reason: 'unauthorized' },
       },
     }),
   );
