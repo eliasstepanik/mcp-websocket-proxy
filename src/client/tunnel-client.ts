@@ -441,7 +441,15 @@ export class TunnelClient {
   }
 
   private send(message: ClientToServer): void {
-    const ws = this.ws;
+    this.sendOn(this.ws, message);
+  }
+
+  /**
+   * Send on one specific socket. Anything but the current socket is dropped: a
+   * frame written to a dead or replaced connection would either vanish or — worse —
+   * be read by the server as the answer to *its* request carrying the same id.
+   */
+  private sendOn(ws: WebSocket | undefined, message: ClientToServer): void {
     if (!ws || ws.readyState !== 1 /* WebSocket.OPEN */) return;
     try {
       ws.send(JSON.stringify(message));
