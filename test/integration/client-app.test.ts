@@ -52,10 +52,10 @@ const testEnv = (): NodeJS.ProcessEnv => ({ ...process.env, [TOKEN_ENV]: CLIENT_
 // Harness
 // ---------------------------------------------------------------------------
 
-async function waitFor(predicate: () => boolean, label: string, timeoutMs = 20_000): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, label: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (predicate()) return;
+    if (await predicate()) return;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
