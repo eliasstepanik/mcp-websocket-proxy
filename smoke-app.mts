@@ -51,7 +51,7 @@ console.log('tools/list', r2.status, (await r2.text()).replace(/\r\n/g, '|').sli
 await fetch(`${base}/mcp/demo`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-session-id': sid },
-  body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: '99', reason: 'gone' } }),
+  body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/roots/list_changed', params: {} }),
 });
 await new Promise((r) => setTimeout(r, 150));
 console.log('tunnel saw', JSON.stringify(frames.filter((f) => f.type === 'request' || f.type === 'notification')));
