@@ -9,19 +9,21 @@ to this proxy and keeps it open; Warren talks plain HTTPS to the proxy, and the
 proxy relays JSON-RPC over the tunnel in both directions.
 
 ```
-        Warren (backend)                     server (this repo)                work PC
-  ┌───────────────────────┐            ┌───────────────────────────┐      ┌──────────────────────┐
-  │ warren.toml           │  HTTPS     │  Caddy (TLS)              │      │  client (T5/T6)      │
-  │ [mcp.work-fs]         │  POST      │   │                     │      │  ┌────────────────┐  │
-  │ url=.../mcp/filesystem├───────────►│   ▼                     │      │  │ filesystem     │  │
-  │                       │  GET(SSE)  │  node dist/server/      │      │  │ main.js        │  │
-  │                       │◄───────────┤  main.js  :8080         │      │  ├────────────────┤  │
-  └───────────────────────┘            │   ├ /mcp/<name>         │      │  │ npx <stdio     │  │
-                                       │   ├ /status  /healthz   │      │  │ MCP servers>   │  │
-                                       │   └ upgrade /tunnel     │◄─────┤  └───────┬────────┘  │
-                                       └───────────┬─────────────┘ wss  └──────────┼───────────┘
-                                                   │  one outbound WebSocket       │ stdio
-                                                   └───────────────────────────────┘
+   Warren (backend)                server (this repo)                work PC
+   ---------------                -------------------                -------
+
+   warren.toml          HTTPS      Caddy (TLS)                 client (T5/T6)
+   [mcp.work-fs]          |            |                        +--------------+
+   url = .../mcp/         v            v                        | filesystem   |
+     filesystem      +-----------------------+   wss /tunnel    | main.js      |
+        |             | node dist/server/   |<-----------------|              |
+        |  POST/GET   |   main.js  :8080    |  one outbound    +------+-------+
+        v             |                     |   WebSocket             | stdio
+   +----------+       |  /mcp/<name>        |                  +------+-------+
+   |  SSE /   |------>|  /status /healthz   |                  | npx <stdio   |
+   |  results |       |  upgrade /tunnel    |----------------->| MCP servers> |
+   +----------+       +-----------------------+   JSON-RPC     +--------------+
+                                                  over tunnel
 ```
 
 Two bearer tokens keep the two directions apart (`src/server/config.ts`):
