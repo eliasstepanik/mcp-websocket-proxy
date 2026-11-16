@@ -166,6 +166,10 @@ export class TunnelClient {
   /** Number of consecutive failed reconnect attempts; drives the backoff. */
   private attempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  /** `welcome.heartbeatIntervalMs`: how often the server pings, per the server's own report. */
+  private heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
+  /** Fires when no server `ping` arrived in time: the socket is silently dead. */
+  private livenessTimer: ReturnType<typeof setTimeout> | undefined;
   /** Requests the local servers are running right now, keyed by wire id. */
   private readonly inFlight = new Map<string, InFlight>();
   /** The `info` last sent in a `server_up`, per server name. */
