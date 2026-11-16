@@ -233,4 +233,10 @@ if (process.env.FIXTURE_CRASH_MS) {
   setTimeout(() => process.exit(1), Number(process.env.FIXTURE_CRASH_MS)).unref?.();
 }
 
+// Dump this process' environment so tests can prove the proxy merged the SDK's default
+// environment (PATH, HOME / SYSTEMROOT) with the configured one.
+if (process.env.FIXTURE_ENV_FILE) {
+  writeFileSync(process.env.FIXTURE_ENV_FILE, JSON.stringify(process.env));
+}
+
 await server.connect(new StdioServerTransport());
