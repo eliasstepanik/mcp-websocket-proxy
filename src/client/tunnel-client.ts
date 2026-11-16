@@ -274,8 +274,9 @@ export class TunnelClient {
       // The local children keep running, but a request whose answer can never be
       // delivered again is work nobody waits for: abort it so the child stops and
       // the answer (which would carry an id the next connection may reuse) is never
-      // produced.
-      this.abortInFlight('the tunnel connection dropped while the request was in flight');
+      // produced. The abort reason uses the proxy's own `client_disconnected`
+      // vocabulary, so a child that observes it sees the same reason Warren does.
+      this.abortInFlight('client_disconnected');
       this.scheduleReconnect(code);
     });
     ws.on('error', () => {
