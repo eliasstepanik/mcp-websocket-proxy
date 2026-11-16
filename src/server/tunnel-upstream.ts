@@ -129,7 +129,7 @@ export class TunnelUpstream implements Upstream {
    * connection drops or the deadline passes, and with the upstream's
    * {@link UpstreamRpcError} unchanged.
    */
-  request(method: string, params?: unknown, options?: UpstreamRequestOptions): Promise<unknown> {
+  async request(method: string, params?: unknown, options?: UpstreamRequestOptions): Promise<unknown> {
     const tunnel = this.liveTunnel();
     return tunnel.sendRequest(this.name, {
       method,
