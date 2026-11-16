@@ -336,7 +336,7 @@ describe('TunnelUpstreams / createTunnelUpstreamFactory', () => {
     await expect(upstream.request('ping')).rejects.toMatchObject({ reason: 'offline' });
   });
 
-  it('track()/untrack() re-bind subscriptions so notifications survive a reconnect', () => {
+  it('track()/untrack() re-bind subscriptions so notifications survive a reconnect', async () => {
     const registry = fakeRegistry(new Map([['files', lookupOf('files')]]));
     const tunnels = new Map<string, TunnelUpstreamTransport>();
     const manager = new TunnelUpstreams(registry, tunnels);
