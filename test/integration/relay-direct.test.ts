@@ -205,7 +205,11 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
 
     expect(error).toBeInstanceOf(McpError);
     expect(error?.code).toBe(-32100);
-    expect(error?.message).toBe('fixture refuses to echo');
+    // The SDK's client always re-wraps a JSON-RPC error as `MCP error <code>: <message>`.
+    // The proxy itself must add no prefix of its own, so exactly one prefix is expected
+    // and the upstream message must survive verbatim behind it.
+    expect(error?.message).toBe('MCP error -32100: fixture refuses to echo');
+    expect(error?.message.match(/MCP error -32100: /g)).toHaveLength(1);
     expect(error?.data).toEqual({ fixture: true });
     await client.close();
   });
