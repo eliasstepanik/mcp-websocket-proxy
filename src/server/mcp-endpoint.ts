@@ -1,22 +1,22 @@
 /**
  * The Streamable HTTP MCP endpoint (`/mcp/<name>` on the real server).
  *
- * One {@link McpEndpointSession} = one Warren session = one SDK `Server` + one
+ * One {@link McpEndpointSession} == one Warren session == one SDK `Server` + one
  * `StreamableHTTPServerTransport`. Never a singleton: the transport owns the HTTP
  * response and the per-session state.
  *
  * Responsibilities:
- * - `initialize` and `ping` are answered locally from the cached
- *   {@link UpstreamInfo}, so Warren can initialise even when the upstream is a
- *   cached snapshot.
+ * - `initialize` and `ping` are answered locally, from the cached
+ *   {@link UpstreamInfo}, so Warren can initialise without an upstream round-trip.
  * - every other request is relayed through {@link Upstream.request}; upstream
  *   errors keep their JSON-RPC code, proxy errors use `-32050`.
  * - upstream-originated notifications are forwarded to Warren over the session's
  *   standalone SSE stream; per-request progress is re-tagged with Warren's own
  *   progress token.
  *
- * Note on HTTP: `transport.handleRequest()` writes the response itself (including
- * headers and SSE frames). Never touch `res` yourself or the transport will throw.
+ * HTTP note: `transport.handleRequest()` writes the response itself (status line,
+ * headers and SSE frames). Never write to `res` yourself for a request you hand to
+ * the transport, or it will throw on the already-headers-sent response.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -26,11 +26,11 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest, type JSONRPCRequest, type Result } from '@modelcontextprotocol/sdk/types.js';
 
-import type { Upstream, UpstreamNotification } from '../shared/upstream.js';
-import { proxyError } from '../shared/errors.js';
+import type { Upstream, UpstreamNotification, UpstreamProgress } from '../shared/upstream.js';
+import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE, proxyError } from '../shared/errors.js';
 
 /** Max bytes accepted for a single JSON-RPC POST body. */
-const MAX_BODY_BYTES = 4 * 1024 * 1024;
+export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 /** Valid MCP server names (no dots: Warren splits `mcp.<server>.<tool>` on the first dot). */
 export const SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
@@ -41,51 +41,60 @@ export function assertValidServerName(name: string): void {
   }
 }
 
+export interface McpEndpointSessionOptions {
+  /** Called with the session id as soon as the transport has created it. */
+  onSessionInitialized?: (sessionId: string) => void;
+  /** Called when the session is gone (DELETE, transport close, or {@link McpEndpointSession.close}). */
+  onClosed?: () => void;
+}
+
 export interface McpEndpointSession {
   server: Server;
   transport: StreamableHTTPServerTransport;
-  sessionId: string | undefined;
+  readonly sessionId: string | undefined;
   close(): Promise<void>;
 }
 
 /**
- * Creates one Warren session: a fresh `Server` whose capabilities mirror the
- * upstream's, plus a fresh Streamable HTTP transport wired to it.
+ * Creates one Warren session: a fresh `Server` whose advertised capabilities mirror
+ * the upstream's, plus a fresh Streamable HTTP transport wired to it.
  */
-export async function createEndpointSession(upstream: Upstream): Promise<McpEndpointSession> {
+export async function createEndpointSession(upstream: Upstream, options: McpEndpointSessionOptions = {}): Promise<McpEndpointSession> {
   const info = upstream.info;
 
   const server = new Server(
-    { name: info.serverInfo.name, version: info.serverInfo.version, ...(info.instructions ? { instructions: info.instructions } : {}) },
+    {
+      name: info.serverInfo.name,
+      version: info.serverInfo.version,
+      ...(info.instructions !== undefined ? { instructions: info.instructions } : {}),
+    },
     { capabilities: info.capabilities },
   );
 
-  // The SDK answers `logging/setLevel` itself when the server advertises the
-  // `logging` capability. We are a proxy: the upstream owns that state, so drop
+  // The SDK's `Server` answers `logging/setLevel` itself when the `logging`
+  // capability is advertised. We are a proxy: the upstream owns that state, so drop
   // the built-in handler and let the fallback relay it.
   server.removeRequestHandler('logging/setLevel');
 
   server.fallbackRequestHandler = async (request: JSONRPCRequest, extra) => {
-    const params = isRecord(request.params) ? { ...request.params } : request.params;
-    const warrenToken = readProgressToken(params);
-    if (isRecord(params) && isRecord(params._meta) && 'progressToken' in params._meta) {
-      const meta = { ...params._meta } as Record<string, unknown>;
-      delete meta.progressToken;
-      params._meta = meta;
-    }
+    const params = stripProgressToken(request.params);
+    const warrenToken = readProgressToken(request.params);
 
     return upstream.request(request.method, params, {
       ...(extra.signal ? { signal: extra.signal } : {}),
       ...(warrenToken !== undefined
         ? {
-            onProgress: (progress: Record<string, unknown>) => {
+            onProgress: (progress: UpstreamProgress) => {
               void server
                 .notification(
-                  { method: 'notifications/progress', params: { progressToken: warrenToken, ...progress } },
+                  {
+                    method: 'notifications/progress',
+                    params: { progressToken: warrenToken, ...progress },
+                  },
                   { relatedRequestId: extra.requestId },
                 )
                 .catch(() => {
-                  /* Warren already went away. */
+                  /* Warren's stream is gone; progress is best-effort. */
                 });
             },
           }
@@ -97,44 +106,62 @@ export async function createEndpointSession(upstream: Upstream): Promise<McpEndp
     await upstream.notification(notification.method, notification.params);
   };
 
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
-
   let closed = false;
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+    ...(options.onSessionInitialized ? { onsessioninitialized: options.onSessionInitialized } : {}),
+    ...(options.onClosed ? { onsessionclosed: () => options.onClosed?.() } : {}),
+  });
+
+  const unsubscribe = upstream.subscribe((notification: UpstreamNotification) => {
+    void server
+      .notification({
+        method: notification.method,
+        ...(notification.params !== undefined ? { params: notification.params } : {}),
+      })
+      .catch(() => {
+        /* No live SSE stream for this session right now: notification dropped. */
+      });
+  });
+
   const close = async (): Promise<void> => {
     if (closed) return;
     closed = true;
     unsubscribe();
+    options.onClosed?.();
     await transport.close();
     await server.close();
   };
   transport.onclose = () => {
     void close();
   };
-  const unsubscribe = upstream.subscribe((notification: UpstreamNotification) => {
-    void server
-      .notification({ method: notification.method, ...(notification.params !== undefined ? { params: notification.params } : {}) })
-      .catch(() => {
-        /* No live stream for this session right now; the notification is dropped. */
-      });
-  });
 
   await server.connect(transport);
 
-  return { server, transport, get sessionId() { return transport.sessionId; }, close };
+  return {
+    server,
+    transport,
+    get sessionId() {
+      return transport.sessionId;
+    },
+    close,
+  };
 }
 
-/** Options for {@link createMcpEndpointHandler}. */
 export interface McpEndpointHandlerOptions {
-  /** Name of the proxied server, used for diagnostics. */
+  /** Name of the proxied server (validated against {@link SERVER_NAME_PATTERN}). */
   name: string;
-  /** Resolves the upstream for an incoming request; throw to fail the request. */
+  /**
+   * Resolves the upstream to bind to a new Warren session. Throw a {@link ProxyError}
+   * (e.g. reason `offline`) to fail `initialize` with a proxy error instead.
+   */
   upstream: Upstream | (() => Upstream);
-  /** Called when a Warren session is created (T2 uses this to bind tunnel state). */
+  /** Observes session creation (T2 uses this to bind tunnel state). */
   onSession?: (session: McpEndpointSession) => void;
 }
 
 export interface McpEndpointHandler {
-  /** Handles GET/POST/DELETE for a single `/mcp/<name>` route. */
+  /** Handles GET/POST/DELETE for one `/mcp/<name>` route. */
   handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Number of live Warren sessions. */
   sessionCount(): number;
@@ -142,13 +169,18 @@ export interface McpEndpointHandler {
 }
 
 /**
- * Builds the request handler for one `/mcp/<name>` route. Sessions are keyed by the
- * `Mcp-Session-Id` the transport generates during `initialize`.
+ * Builds the request handler for one `/mcp/<name>` route. Warren sessions are keyed
+ * by the `Mcp-Session-Id` the transport generates during `initialize`.
  */
 export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): McpEndpointHandler {
   assertValidServerName(options.name);
   const sessions = new Map<string, McpEndpointSession>();
-  const resolveUpstream = typeof options.upstream === 'function' ? options.upstream : () => options.upstream as Upstream;
+  const resolveUpstream = typeof options.upstream === 'function' ? (options.upstream as () => Upstream) : () => options.upstream as Upstream;
+
+  const bindSession = (session: McpEndpointSession): void => {
+    if (session.sessionId) sessions.set(session.sessionId, session);
+    options.onSession?.(session);
+  };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const headerSessionId = firstHeader(req, 'mcp-session-id');
@@ -158,56 +190,57 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
       try {
         body = await readJsonBody(req);
       } catch (error) {
-        sendJson(res, 413, jsonRpcError(null, -32700, (error as Error).message));
+        sendJson(res, 400, jsonRpcError(null, -32700, (error as Error).message));
         return;
       }
 
-      let session: McpEndpointSession | undefined = headerSessionId ? sessions.get(headerSessionId) : undefined;
+      let session = headerSessionId ? sessions.get(headerSessionId) : undefined;
 
       if (!session) {
         if (!isInitializeRequest(body)) {
-          sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: no such session'));
+          sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: unknown or missing Mcp-Session-Id'));
           return;
         }
         let upstream: Upstream;
         try {
           upstream = resolveUpstream();
+          void upstream.info; // fails fast with a proxy error when nothing is upstream
         } catch (error) {
-          sendJson(res, 503, jsonRpcError(null, -32050, (error as Error).message, { source: 'mcp-websocket-proxy' }));
+          const code = typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : -32603;
+          sendJson(res, 503, jsonRpcError(null, code, (error as Error).message, (error as { data?: unknown }).data));
           return;
         }
-        const created = await createEndpointSession(upstream);
-        created.transport.onsessioninitialized = (sessionId: string) => {
-          sessions.set(sessionId, created);
-          options.onSession?.(created);
-        };
-        created.transport.onclose = () => {
-          if (created.sessionId) sessions.delete(created.sessionId);
-        };
+        const created = await createEndpointSession(upstream, {
+          onSessionInitialized: (sessionId) => sessions.set(sessionId, created),
+          onClosed: () => {
+            if (session?.sessionId) sessions.delete(session.sessionId);
+          },
+        });
         session = created;
+        bindSession(created);
       }
 
       await session.transport.handleRequest(req, res, body);
-      if (session.sessionId) sessions.set(session.sessionId, session);
       return;
     }
 
     if (req.method === 'GET' || req.method === 'DELETE') {
       const session = headerSessionId ? sessions.get(headerSessionId) : undefined;
       if (!session) {
-        sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: no such session'));
+        sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: unknown or missing Mcp-Session-Id'));
+        return;
+      }
+      if (req.method === 'DELETE') {
+        sessions.delete(session.sessionId ?? headerSessionId ?? '');
+        await session.transport.handleRequest(req, res);
+        await session.close();
         return;
       }
       await session.transport.handleRequest(req, res);
-      if (req.method === 'DELETE' && session.sessionId) {
-        sessions.delete(session.sessionId);
-        await session.close();
-      }
       return;
     }
 
-    res.writeHead(405, { allow: 'GET, POST, DELETE' });
-    res.end();
+    sendJson(res, 405, jsonRpcError(null, -32000, 'Method Not Allowed'));
   };
 
   return {
@@ -222,11 +255,21 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
 }
 
 function readProgressToken(params: unknown): string | number | undefined {
-  if (!isRecord(params)) return undefined;
-  const meta = params._meta;
+  const meta = isRecord(params) ? params._meta : undefined;
   if (!isRecord(meta)) return undefined;
   const token = meta.progressToken;
   return typeof token === 'string' || typeof token === 'number' ? token : undefined;
+}
+
+/** Remove Warren's progress token: the upstream leg owns its own tokens. */
+function stripProgressToken(params: unknown): unknown {
+  if (!isRecord(params)) return params;
+  const meta = isRecord(params._meta) ? { ...params._meta } : undefined;
+  if (meta && 'progressToken' in meta) {
+    delete meta.progressToken;
+    return { ...params, _meta: meta };
+  }
+  return params;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -248,11 +291,19 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) throw new Error('Empty request body');
-  return JSON.parse(text) as unknown;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error('Parse error: Invalid JSON');
+  }
 }
 
-function jsonRpcError(id: unknown, code: number, message: string, data?: Record<string, unknown>): unknown {
-  return { jsonrpc: '2.0', id: id ?? null, error: { code, message, ...(data ? { data } : {}) } };
+function jsonRpcError(id: unknown, code: number, message: string, data?: unknown): unknown {
+  return {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: { code, message, ...(data !== undefined ? { data } : { source: PROXY_ERROR_SOURCE, code: PROXY_ERROR_CODE }) },
+  };
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -264,5 +315,4 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-/** Re-exported so callers can produce `server_down`-style failures without importing errors.ts. */
 export { proxyError };
