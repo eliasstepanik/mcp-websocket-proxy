@@ -148,10 +148,9 @@ export class TunnelUpstream implements Upstream {
    *
    * @throws {ProxyError} `offline`/`server_down` when no live tunnel owns the name.
    */
-  notification(method: string, params?: unknown): Promise<void> {
+  async notification(method: string, params?: unknown): Promise<void> {
     const tunnel = this.liveTunnel();
     tunnel.sendNotification(this.name, method, params);
-    return Promise.resolve();
   }
 
   /**
