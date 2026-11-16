@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev:server": "tsx watch --clear-screen=false src/server/main.ts",
-    "dev:client": "tsx watch --clear-screen=false src/client/index.ts",
+    "dev:client": "tsx watch --clear-screen=false src/client/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
