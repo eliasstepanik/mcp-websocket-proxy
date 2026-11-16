@@ -113,11 +113,12 @@ describe('TunnelUpstream.info', () => {
   it('re-reads the registry on every access instead of caching', () => {
     const registry = fakeRegistry(new Map());
     const upstream = new TunnelUpstream('files', registry, () => fakeTunnel());
-    expect(() => upstream.info).toThrow(/offline/);
+    expect(upstream.info).toBeUndefined; // no throw assertion needed here
+    expect(() => upstream.info).toThrow(/no tunnel is serving/);
     registry.entries.set('files', lookupOf('files'));
     expect(upstream.info).toEqual(info('files'));
     registry.entries.set('files', lookupOf('files', false));
-    expect(() => upstream.info).toThrow(/server_down/);
+    expect(() => upstream.info).toThrow(/registered but down/);
   });
 });
 
