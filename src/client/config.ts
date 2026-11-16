@@ -293,6 +293,8 @@ function validateUrl(url: string, allowInsecure: boolean, errors: string[]): voi
 function parseServerSection(root: Record<string, unknown>, errors: string[]): ClientConfig['server'] {
   const section = readSection(root, 'server', errors);
   const url = readString(section, 'url', 'server', errors, { required: true }) ?? '';
+  // Only non-empty is required: token length is the server's policy, and a
+  // client-side guess would reject valid tokens.
   const token = readString(section, 'token', 'server', errors, { required: true }) ?? '';
   const allowInsecure = readBoolean(section, 'allowInsecure', 'server', errors, false);
   if (url.trim()) validateUrl(url.trim(), allowInsecure, errors);
