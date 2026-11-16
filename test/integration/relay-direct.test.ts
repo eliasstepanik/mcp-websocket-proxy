@@ -286,7 +286,7 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
       }),
     });
     expect(response.status).toBe(406);
-    expect(handler.sessionCount()).toBe(0);
+    expect(handler!.sessionCount()).toBe(0);
   });
 
   it('rejects requests for an unknown session id', async () => {
