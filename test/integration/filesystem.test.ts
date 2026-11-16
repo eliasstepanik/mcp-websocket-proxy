@@ -194,10 +194,7 @@ describe('built-in filesystem server through the tunnel', () => {
       logFile,
     });
     expect(agent.servers.has('filesystem')).toBe(true);
-    await waitFor(async () => (await fetch(`${baseUrl}/status`, { headers: { authorization: bearerHeader(ENDPOINT_TOKEN) } }).then((r) => r.json()))
-      .then((body: { clients: { servers: { name: string; up: boolean }[] }[] }) =>
-        body.clients.some((client) => client.servers.some((server) => server.name === 'filesystem' && server.up)),
-      ), 'the filesystem server to be up');
+    await waitFor(async () => await isUp('filesystem'), 'the filesystem server to be up');
 
     const warren = await connectServer('filesystem');
     expect((await warren.listTools()).tools.map((tool) => tool.name)).toContain('list_directory');
