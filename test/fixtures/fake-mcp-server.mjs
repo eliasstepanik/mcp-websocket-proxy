@@ -220,6 +220,11 @@ server.setRequestHandler(SetLevelRequestSchema, async (request) => {
   return {};
 });
 
-log(`started (startCount=${state.startCount}, pid=${process.pid})`);
+log(`started (pid=${process.pid})`);
+
+// Append one line per process start so tests can count restarts from the outside.
+if (process.env.FIXTURE_START_LOG) {
+  writeFileSync(process.env.FIXTURE_START_LOG, `${process.pid}\n`, { flag: 'a' });
+}
 
 await server.connect(new StdioServerTransport());
