@@ -66,6 +66,12 @@ export class LocalMcpServer implements Upstream {
   private readonly options: LocalServerOptions;
   private client: Client | undefined;
   private transport: StdioClientTransport | undefined;
+  /**
+   * The client/transport of a {@link spawn} that has not finished the `initialize`
+   * handshake yet. Kept in a field so {@link stop} can close an in-flight child
+   * instead of leaking it.
+   */
+  private pending: { client: Client; transport: StdioClientTransport } | undefined;
   private cachedInfo: UpstreamInfo | undefined;
   private state: LocalServerState = 'stopped';
   private restartAttempt = 0;
