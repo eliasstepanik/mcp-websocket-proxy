@@ -195,6 +195,7 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
       }
 
       let session = headerSessionId ? sessions.get(headerSessionId) : undefined;
+      let isNewSession = false;
 
       if (!session) {
         if (!isInitializeRequest(body)) {
@@ -213,19 +214,20 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
         const created = await createEndpointSession(upstream, {
           onSessionInitialized: (sessionId) => sessions.set(sessionId, created),
           onClosed: () => {
-            if (session?.sessionId) sessions.delete(session.sessionId);
+            if (created.sessionId) sessions.delete(created.sessionId);
           },
         });
         session = created;
-        bindSession(created);
-        pendingNewSession = created;
+        isNewSession = true;
+        options.onSession?.(created);
       }
 
       await session.transport.handleRequest(req, res, body);
-      // A failed initialize (e.g. 406 on a bad Accept header) never produced a
-      // session id, so the session we just built is unreachable: drop it.
-      if (pendingNewSession && !pendingNewSession.sessionId) {
-        await pendingNewSession.close();
+
+      // A rejected initialize (e.g. 406 for a bad Accept header) never produced a
+      // session id, so the session just built is unreachable: drop it again.
+      if (isNewSession && !session.sessionId) {
+        await session.close();
       }
       return;
     }
