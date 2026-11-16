@@ -17,7 +17,7 @@
  * executed directly (see {@link isMain}), which keeps it unit-testable.
  */
 
-import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import { createApp, type App } from './app.js';
 import { ConfigError, logLevelRank, readConfig, type ProxyConfig } from './config.js';
