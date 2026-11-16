@@ -45,6 +45,9 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024;
  */
 const OFFLINE_RETRY_AFTER_SECONDS = 10;
 
+/** Default idle TTL: a Warren session that has not been used for a week is reaped. */
+const DEFAULT_SESSION_IDLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Valid MCP server names (no dots: Warren splits `mcp.<server>.<tool>` on the first dot). */
 export const SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
