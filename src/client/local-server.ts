@@ -351,13 +351,26 @@ export class LocalMcpServer implements Upstream {
     this.restartTimer.unref?.();
   }
 
-  private onStderr(chunk: Buffer): void {
-    this.stderrBuffer += chunk.toString('utf8');
-    const lines = this.stderrBuffer.split('\n');
-    this.stderrBuffer = lines.pop() ?? '';
+  private onStderr(sink: StderrSink, chunk: Buffer): void {
+    sink.buffer += chunk.toString('utf8');
+    // A child that never sends a newline must not grow the buffer without bound:
+    // force-flush whatever accumulated once it passes the cap.
+    let overflow = false;
+    if (Buffer.byteLength(sink.buffer, 'utf8') > MAX_STDERR_BUFFER_BYTES) {
+      sink.buffer = `${sink.buffer.slice(-MAX_STDERR_BUFFER_BYTES)}\n`;
+      overflow = true;
+    }
+    const lines = sink.buffer.split('\n');
+    if (!overflow) sink.buffer = lines.pop() ?? '';
+    else sink.buffer = '';
+    // The pid comes from this spawn's own transport: `this.transport` may already
+    // point at a newer child (startup lines) or at nothing (late lines).
+    const pid = sink.transport.pid ?? '?';
     for (const line of lines) {
       if (!line.trim()) continue;
-      const prefixed = line.startsWith(`[${this.name}:`) ? line : `[${this.name}:pid=${this.transport?.pid ?? '?'}] ${line}`;
+      // Always prefix: a child that writes its own `[name:pid=...]` header must not
+      // be able to masquerade as another server.
+      const prefixed = `[${this.name}:pid=${pid}] ${line}`;
       if (this.options.onStderrLine) this.options.onStderrLine(prefixed);
       else process.stderr.write(`${prefixed}\n`);
     }
