@@ -28,14 +28,14 @@ import type { Upstream } from '../../src/shared/upstream.js';
 
 const FIXTURE = new URL('../fixtures/fake-mcp-server.mjs', import.meta.url).pathname;
 
-let httpServer: HttpServer;
-let baseUrl: string;
-let handler: McpEndpointHandler;
-let local: LocalMcpServer;
-let stderrLines: string[];
-let stateChanges: string[];
-let startLogFile: string;
-let workDir: string;
+let httpServer: HttpServer | undefined;
+let baseUrl = '';
+let handler: McpEndpointHandler | undefined;
+let local: LocalMcpServer | undefined;
+let stderrLines: string[] = [];
+let stateChanges: string[] = [];
+let startLogFile = '';
+let workDir = '';
 
 async function startStack(): Promise<void> {
   stderrLines = [];
