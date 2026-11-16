@@ -493,8 +493,10 @@ describe('disconnect (g): a request deadline', () => {
       'the fixture to observe the cancellation',
       10_000,
     );
+    // The reason the child sees is the tunnel's own cancel reason, i.e. proof the
+    // `cancel` frame above is what aborted the call in the child process.
     const state = await readFixtureState(alpha.client);
-    expect(String((state.lastCancellation as { reason?: string }).reason)).toContain('cancel');
+    expect(String((state.lastCancellation as { reason?: string }).reason)).toBe('timeout');
 
     // The tunnel is still usable after the timed-out request.
     expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'after the deadline' } })).toEqual({
