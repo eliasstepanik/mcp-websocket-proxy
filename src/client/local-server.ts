@@ -215,6 +215,18 @@ export class LocalMcpServer implements Upstream {
     };
   }
 
+  /**
+   * Subscribes to {@link LocalServerOptions.onStateChange}-style state events from
+   * outside the constructor (the tunnel client is handed finished servers).
+   * Returns an unsubscribe function.
+   */
+  subscribeState(listener: (state: LocalServerState, detail?: string) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
   // ------------------------------------------------------------------ internals
 
   private async spawn(): Promise<void> {
