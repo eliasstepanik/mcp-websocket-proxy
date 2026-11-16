@@ -200,6 +200,11 @@ export class LocalMcpServer implements Upstream {
 
     const client = new Client({ name: 'mcp-websocket-proxy-client', version: '0.1.0' });
 
+    // Remember the in-flight pair so `stop()` can close it (and so a later `stop()`
+    // is recognisable here via the identity check after the handshake).
+    const pending = { client, transport };
+    this.pending = pending;
+
     transport.stderr?.on('data', (chunk: Buffer) => this.onStderr(chunk));
 
     // Snapshot of the initialise result, captured off the wire so we can report the
