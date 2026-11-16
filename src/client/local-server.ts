@@ -254,7 +254,9 @@ export class LocalMcpServer implements Upstream {
         // `stop()` already closed this child and reported `stopped`: nothing to restart.
         return;
       }
-      this.cachedInfo = undefined;
+      // Keep the last good `cachedInfo` (if any): a restart hiccup must not turn new
+      // `initialize` requests into 503s. Availability is gated separately by
+      // {@link available}, which reads the state, not the cache.
       this.handleUnexpectedExit((error as Error).message);
       throw proxyError('server_down', `local server "${this.name}" failed to start: ${(error as Error).message}`);
     }
