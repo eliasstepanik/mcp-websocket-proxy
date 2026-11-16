@@ -235,6 +235,26 @@ export class TunnelHandler {
     };
   }
 
+  /**
+   * Relay a JSON-RPC notification (Warren -> upstream, e.g.
+   * `notifications/cancelled`) as a `notification` frame for `server`.
+   *
+   * NOTE: `notification` is declared in the client -> server direction of the wire
+   * schema, so this frame cannot go through the typed {@link TunnelHandler.send};
+   * it is written directly, exactly as {@link TunnelHandler.ackInvalidServerName}
+   * does for its ack.
+   */
+  sendNotification(server: string, method: string, params?: unknown): void {
+    this.sendRaw(
+      JSON.stringify({
+        type: 'notification',
+        server,
+        method,
+        ...(params !== undefined ? { params } : {}),
+      }),
+    );
+  }
+
   /** Close the tunnel and fail everything in flight. */
   close(code = 1000, reason = ''): void {
     try {
