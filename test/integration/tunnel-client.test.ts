@@ -36,7 +36,7 @@ let url = '';
 let authHeaders: Array<string | undefined> = [];
 /** The server-side sockets, so a test can drop one and watch the client reconnect. */
 let sockets: WebSocket[];
-let handlerOverrides: ConstructorParameters<typeof TunnelHandler>[2> = {};
+let handlerOverrides: ConstructorParameters<typeof TunnelHandler>[2] = {};
 
 let client: TunnelClient | undefined;
 let locals: Map<string, LocalMcpServer>;
