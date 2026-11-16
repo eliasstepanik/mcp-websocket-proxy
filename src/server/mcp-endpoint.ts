@@ -409,7 +409,8 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY_BYTES) throw new Error('Request body too large');
+    // Oversized bodies are a proxy-level failure, not a JSON-RPC parse error.
+    if (size > MAX_BODY_BYTES) throw proxyError('too_large', `Request body too large (limit ${MAX_BODY_BYTES} bytes)`);
     chunks.push(chunk as Buffer);
   }
   const text = Buffer.concat(chunks).toString('utf8');
