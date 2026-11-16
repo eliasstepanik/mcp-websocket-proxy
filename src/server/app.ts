@@ -352,7 +352,7 @@ function sendUnauthorized(res: ServerResponse): void {
       jsonrpc: '2.0',
       id: null,
       error: {
-        code: PROXY_ERROR_CODE,
+        code: -32000,
         message: 'Unauthorized: a valid bearer token is required',
         data: { source: PROXY_ERROR_SOURCE, reason: 'unauthorized' },
       },
