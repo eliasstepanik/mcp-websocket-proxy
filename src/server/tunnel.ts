@@ -144,6 +144,7 @@ export class TunnelHandler {
   private readonly ws: WebSocket;
   private readonly registry: Registry<WsLike>;
   private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatTimeoutMs: number;
   private readonly helloTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private readonly serverVersion: string | undefined;
@@ -151,7 +152,8 @@ export class TunnelHandler {
   private clientId: string | undefined;
   private helloTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-  private isAlive = true;
+  /** Fires when no `pong` arrived within {@link heartbeatTimeoutMs}: the socket is a zombie. */
+  private livenessTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private readonly pending = new Map<string, InFlight>();
   private readonly subscribers = new Map<string, Set<NotificationListener>>();
