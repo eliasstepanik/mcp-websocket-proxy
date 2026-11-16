@@ -21,7 +21,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { McpError, ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
-import { createMcpEndpointHandler, type McpEndpointHandler } from '../../src/server/mcp-endpoint.js';
+import { createMcpEndpointHandler, MAX_BODY_BYTES, type McpEndpointHandler } from '../../src/server/mcp-endpoint.js';
 import { LocalMcpServer } from '../../src/client/local-server.js';
 import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE, proxyError } from '../../src/shared/errors.js';
 import type { Upstream, UpstreamInfo } from '../../src/shared/upstream.js';
