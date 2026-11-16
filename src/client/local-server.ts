@@ -107,21 +107,29 @@ export class LocalMcpServer implements Upstream {
 
   /** Spawn the child and complete the `initialize` handshake. */
   async start(): Promise<void> {
+    // Only a server that is not running may be started: starting while `starting`,
+    // `running` or `backoff` would spawn a second child next to the live one.
+    if (this.state !== 'stopped' && this.state !== 'failed') return;
     this.stopping = false;
     await this.spawn();
   }
 
-  /** Stop the child and do not restart it. */
+  /** Stop the child and do not restart it. Safe to call during `start()`. */
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.restartTimer) {
       clearTimeout(this.restartTimer);
       this.restartTimer = undefined;
     }
+    // A `start()` may still be awaiting its `initialize` handshake: close that child
+    // too, otherwise it is orphaned and would flip the state back to `running`.
+    const pending = this.pending;
+    this.pending = undefined;
     const client = this.client;
     this.client = undefined;
     this.transport = undefined;
     this.setState('stopped');
+    if (pending) await pending.client.close().catch(() => undefined);
     await client?.close().catch(() => undefined);
   }
 
