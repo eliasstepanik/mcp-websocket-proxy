@@ -417,7 +417,7 @@ describe('disconnect (e): takeover by a second connection with the same clientId
     const alpha = await connectServer('alpha');
     expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'takeover' } })).toEqual({
       content: [{ type: 'text', text: 'echo:takeover' }],
-      });
+    });
     await alpha.client.close();
   });
 });
