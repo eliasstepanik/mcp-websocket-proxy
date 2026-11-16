@@ -400,6 +400,47 @@ describe('disconnect (c): reconnect with the same session id', () => {
 
 
 // ---------------------------------------------------------------------------
+// (d) a socket that dies without a close event
+// ---------------------------------------------------------------------------
+
+describe('disconnect (d): a silently dropped socket', () => {
+  it('is found by the heartbeat and the registry marks the servers down', async () => {
+    // A TCP proxy that can stop forwarding without closing anything: neither side
+    // ever sees a FIN, so the client's socket stays open and silent forever.
+    const proxy = await startStallingProxy();
+    client?.stop();
+    tunnels = [];
+    await waitFor(() => app?.registry.connectionCount === 0, 'the first tunnel to go away', 10_000);
+
+    const stalled = await startTunnel({ url: proxy.url });
+    let clientClosedAt = 0;
+    (socketOf(stalled) as unknown as { on(event: 'close', cb: () => void): void }).on('close', () => {
+      clientClosedAt = Date.now();
+    });
+
+    const startedAt = Date.now();
+    proxy.stall();
+    await waitFor(() => app?.registry.lookup('alpha') === undefined, 'alpha to leave the registry', 5_000);
+    const detectedAt = Date.now();
+    const elapsed = detectedAt - startedAt;
+    expect(app?.registry.lookup('beta')).toBeUndefined();
+    expect(app?.registry.connectionCount).toBe(0);
+    // Two heartbeat ticks (a ping, then the ping nobody answered) plus slack: the
+    // drop was found by the keepalive, not by a close event.
+    expect(elapsed).toBeGreaterThanOrEqual(HEARTBEAT_MS);
+    expect(elapsed).toBeLessThan(HEARTBEAT_MS * 2 + 1_000);
+
+    // The client noticed nothing on its own: it only learns about the drop because
+    // the server-side heartbeat tears the socket down, which happens no earlier
+    // than the registry already marked the servers down.
+    expect(clientClosedAt === 0 || clientClosedAt >= detectedAt).toBe(true);
+    expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
+
+    await proxy.stop();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (e) a second connection with the same clientId takes over
 // ---------------------------------------------------------------------------
 
