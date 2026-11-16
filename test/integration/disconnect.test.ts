@@ -404,7 +404,7 @@ describe('disconnect (c): reconnect with the same session id', () => {
 // ---------------------------------------------------------------------------
 
 describe('disconnect (d): a silently dropped socket', () => {
-  it('is found by the heartbeat and the registry marks the servers down', async () => {
+  it('is found by the keepalive and the registry marks the servers down', async () => {
     // A TCP proxy that can stop forwarding without closing anything: neither side
     // ever sees a FIN, so the client's socket stays open and silent forever.
     const proxy = await startStallingProxy();
@@ -426,14 +426,21 @@ describe('disconnect (d): a silently dropped socket', () => {
     expect(app?.registry.lookup('beta')).toBeUndefined();
     expect(app?.registry.connectionCount).toBe(0);
     // Two heartbeat ticks (a ping, then the ping nobody answered) plus slack: the
-    // drop was found by the keepalive, not by a close event.
+    // drop was found by a keepalive, not by a close event.
     expect(elapsed).toBeGreaterThanOrEqual(HEARTBEAT_MS);
     expect(elapsed).toBeLessThan(HEARTBEAT_MS * 2 + 1_000);
 
-    // The client noticed nothing on its own: it only learns about the drop because
-    // the server-side heartbeat tears the socket down, which happens no earlier
-    // than the registry already marked the servers down.
-    expect(clientClosedAt === 0 || clientClosedAt >= detectedAt).toBe(true);
+    // The client notices on its own too: it stops hearing the server's pings, so its
+    // own watchdog (twice `welcome.heartbeatIntervalMs`) kills the zombie socket.
+    // Whichever keepalive fires first, both are inside the same bound.
+    expect(clientClosedAt).toBeGreaterThan(0);
+    expect(clientClosedAt - startedAt).toBeLessThan(HEARTBEAT_MS * 2 + 1_000);
+    await waitFor(
+      () => stalled.state === 'reconnecting',
+      'the client to give up on the silent socket and start reconnecting',
+      HEARTBEAT_MS * 2 + 1_000,
+    );
+    expect(detectedAt).toBeGreaterThan(0);
     expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
 
     await proxy.stop();
