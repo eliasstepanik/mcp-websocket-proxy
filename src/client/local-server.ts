@@ -318,7 +318,9 @@ export class LocalMcpServer implements Upstream {
       serverInfo: client.getServerVersion() ?? { name: this.name, version: '0.0.0' },
       ...(client.getInstructions() !== undefined ? { instructions: client.getInstructions() } : {}),
     };
-    this.restartAttempt = 0;
+    // Uptime, not a successful handshake, decides when the child counts as healthy: a
+    // crash-looping child must keep climbing the backoff schedule until `maxRestarts`.
+    this.runningSince = Date.now();
     this.setState('running');
   }
 
