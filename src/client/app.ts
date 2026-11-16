@@ -210,11 +210,8 @@ export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
   // in the background, and the tunnel simply does not advertise it until it is up.
   const results = await Promise.allSettled([...servers.values()].map((server) => server.start()));
   results.forEach((result, index) => {
+    if (result.status === 'fulfilled') return;
     const name = [...servers.keys()][index] ?? '?';
-    if (result.status === 'fulfilled') {
-      log({ level: 'info', message: 'local server running', server: name });
-      return;
-    }
     log({
       level: 'error',
       message: 'local server failed to start',
