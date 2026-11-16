@@ -34,8 +34,9 @@ import {
   type Progress,
   type Response,
   type ServerToClient,
+  type TunnelMessage,
 } from '../shared/protocol.js';
-import type { UpstreamNotification, UpstreamProgress } from '../shared/upstream.js';
+import type { UpstreamInfo, UpstreamNotification, UpstreamProgress } from '../shared/upstream.js';
 import { proxyError } from '../shared/errors.js';
 import { CLOSE_CODE_REPLACED, Registry, type WsLike } from './registry.js';
 
