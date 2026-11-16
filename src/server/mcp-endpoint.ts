@@ -399,7 +399,8 @@ function proxyJsonRpcError(id: unknown, reason: ProxyErrorReason, message: strin
 /** The reason a thrown error carries, when it is a proxy error. */
 function proxyReasonOf(error: unknown): ProxyErrorReason | undefined {
   if (!isProxyError(error)) return undefined;
-  const reason = (error as { reason?: unknown }).reason;
+  const candidate = error as { reason?: unknown; data?: { reason?: unknown } };
+  const reason = candidate.reason ?? candidate.data?.reason;
   return (PROXY_ERROR_REASONS as readonly string[]).includes(String(reason)) ? (reason as ProxyErrorReason) : 'timeout';
 }
 
