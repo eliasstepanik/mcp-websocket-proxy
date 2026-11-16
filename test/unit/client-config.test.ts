@@ -239,7 +239,7 @@ describe('server.url', () => {
 describe('server names', () => {
   it('rejects a name that does not match SERVER_NAME_RE', () => {
     for (const name of ['Bad_Name', '-lead', '', 'a'.repeat(64)]) {
-      const check = checkConfigText(minimal({ servers: { [name || ' ': { command: 'npx' }] } }), baseEnv());
+      const check = checkConfigText(minimal({ servers: { [name || ' ']: { command: 'npx' } } }), baseEnv());
       expect(check.errors.join('\n')).toContain('invalid server name');
     }
   });
