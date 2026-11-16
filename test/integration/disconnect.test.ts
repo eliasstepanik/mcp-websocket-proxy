@@ -617,6 +617,7 @@ describe('disconnect (h): a late answer must not cross connections', () => {
     const fresh = alpha.client.callTool({ name: 'slow', arguments: { ms: 1_200 } });
     await waitForFrame(newFrames, (frame) => (JSON.parse(frame) as { type?: string }).type === 'request', 'the new request frame', 10_000);
     const freshId = lastRequestId(newFrames);
+    console.log('DEBUG ids', {staleId, freshId, newFrames});
     expect(freshId).not.toBe(staleId);
 
     // Now let the stale answer arrive, written straight onto the *new* socket the way
