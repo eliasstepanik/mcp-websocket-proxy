@@ -126,6 +126,7 @@ describe('markServerDown / lookup', () => {
     // Already down, unknown name and wrong owner all report false.
     expect(registry.markServerDown('pc-1', 'files', 'again')).toBe(false);
     expect(registry.markServerDown('pc-1', 'never', 'x')).toBe(false);
+    registry.registerConnection('pc-2', fakeWs());
     expect(registry.markServerUp('pc-2', 'files', info('files'))).toEqual({ ok: false, error: 'name_conflict' });
   });
 
