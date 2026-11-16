@@ -452,7 +452,8 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
       expect(response.status).toBe(500);
       expect(response.headers.get('retry-after')).toBeNull();
       const body = (await response.json()) as { id: unknown; error: { code: number; message: string; data?: unknown } };
-      expect(body.id).toBe(7);
+      // The id is not trusted before a session exists: errors answer with `id: null`.
+      expect(body.id).toBeNull();
       expect(body.error.code).toBe(-32603);
       expect(body.error.message).toBe('config is broken');
       expect(body.error.data).toBeUndefined();
