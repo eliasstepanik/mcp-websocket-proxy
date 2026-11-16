@@ -386,7 +386,7 @@ describe('e2e: a dropped tunnel', () => {
 
     // ...but the Warren session survives the outage: the same client dials again with
     // the same `clientId` and the session id keeps working, no re-initialize needed.
-    client = new TunnelClient({ url: tunnelUrl, token: TOKEN, clientId: CLIENT_ID, servers: locals });
+    client = new TunnelClient({ url: tunnelUrl, token: CLIENT_TOKEN, clientId: CLIENT_ID, servers: locals });
     await waitFor(() => app?.registry.lookup('alpha')?.up === true, 'alpha to be registered again', 20_000);
 
     const reinitialized = await rawInitialize('alpha');
