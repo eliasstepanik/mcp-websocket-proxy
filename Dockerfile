@@ -62,6 +62,8 @@ EXPOSE 8080
 
 # Liveness only: `/healthz` answers `{"status":"ok"}` without authentication, so
 # the check needs no token. `start-period` covers the module-loading time.
+# The URL assumes the default port: if you set `MCP_PROXY_PORT` to something
+# else, override the healthcheck in `deploy/docker-compose.yml`.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1))"
 
