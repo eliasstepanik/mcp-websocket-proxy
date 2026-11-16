@@ -135,7 +135,7 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     // The agent has no natural end: it runs until a signal, then shuts the tunnel
     // and the children down and exits 0 so a supervisor sees a clean stop.
     const onSignal = (signal: NodeJS.Signals): void => {
-      process.stderr.write(`${JSON.stringify({ level: 'info', message: 'signal', signal })}\n`);
+      process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), level: 'info', message: 'signal', signal })}\n`);
       void close()
         .then(() => resolve())
         .catch(() => {
