@@ -133,8 +133,10 @@ function localOf(name: string): LocalMcpServer {
 }
 
 /** The `ws.WebSocket` a {@link TunnelClient} currently holds (private field, reached on purpose). */
-function socketOf(tunnel: TunnelClient): { terminate(): void; readyState: number; _autoPong?: boolean } {
-  const ws = (tunnel as unknown as { ws?: { terminate(): void; readyState: number; _autoPong?: boolean } }).ws;
+function socketOf(tunnel: TunnelClient): { terminate(): void; readyState: number; send(data: string): void; _autoPong?: boolean } {
+  const ws = (
+    tunnel as unknown as { ws?: { terminate(): void; readyState: number; send(data: string): void; _autoPong?: boolean } }
+  ).ws;
   if (!ws) throw new Error('the tunnel client has no live socket');
   return ws;
 }
