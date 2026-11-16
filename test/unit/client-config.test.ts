@@ -284,8 +284,10 @@ describe('what counts as a server', () => {
   it('requires filesystem.roots when the filesystem server is enabled', () => {
     const check = checkConfigText(minimal({ filesystem: {} }), baseEnv());
     expect(check.errors).toContain('filesystem.roots is required when the filesystem server is enabled');
-    // Not required when disabled.
-    expect(checkConfigText(minimal({ filesystem: { enabled: false } }), baseEnv()).ok).toBe(true);
+    // Not required when disabled, as long as something else is exposed.
+    expect(
+      checkConfigText(minimal({ filesystem: { enabled: false }, servers: { a: { command: 'npx' } } }), baseEnv()).ok,
+    ).toBe(true);
   });
 });
 
