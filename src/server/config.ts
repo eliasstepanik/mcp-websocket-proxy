@@ -18,6 +18,7 @@
 
 import { MIN_TOKEN_LENGTH } from './auth.js';
 
+/** Re-exported: the token-length floor is part of what `readConfig` validates. */
 export { MIN_TOKEN_LENGTH };
 
 /** Console verbosity, most verbose first. */
