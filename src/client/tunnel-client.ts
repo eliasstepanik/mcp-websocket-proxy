@@ -377,6 +377,11 @@ export class TunnelClient {
     switch (msg.type) {
       case 'welcome':
         this.attempt = 0;
+        // The server tells us how often it will keep the connection alive; that is
+        // the interval our own watchdog is measured against. Arm it right away so a
+        // connection that goes quiet before the first ping is caught too.
+        this.heartbeatIntervalMs = msg.heartbeatIntervalMs;
+        this.armLivenessTimer();
         // The server forgot everything it knew about this connection: every
         // available server must be advertised again, even an unchanged one.
         this.advertised.clear();
