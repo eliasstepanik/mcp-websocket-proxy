@@ -193,6 +193,13 @@ async function rawPost(name: string, sessionId: string, body: unknown): Promise<
   });
 }
 
+/** `GET /status` with the endpoint token (the takeover cases read the names back from it). */
+async function fetchStatus(): Promise<{ clients: { clientId: string; servers: { name: string; up: boolean }[] }[]; serverVersion: string }> {
+  const response = await fetch(`${baseUrl}/status`, { headers: { authorization: bearerHeader(ENDPOINT_TOKEN) } });
+  expect(response.status).toBe(200);
+  return (await response.json()) as { clients: { clientId: string; servers: { name: string; up: boolean }[] }[]; serverVersion: string };
+}
+
 /** Reads a fixture child's observable state through its own Warren session. */
 async function readFixtureState(warren: Client): Promise<Record<string, unknown>> {
   const result = await warren.readResource({ uri: 'fixture://state' });
