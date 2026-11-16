@@ -36,8 +36,6 @@ const state = {
   loggingLevel: null,
   /** Last `notifications/cancelled` observed (as seen by the SDK's abort signal). */
   lastCancellation: null,
-  /** How many times this process has been started (0 for the first instance). */
-  startCount: 0,
   /** Number of tool calls handled by this process instance. */
   calls: 0,
   /** Extra tools added through the `mutate` tool. */
