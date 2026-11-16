@@ -342,6 +342,7 @@ export function createApp(options: AppOptions): App {
     wss.handleUpgrade(req, socket, head, (ws) => {
       const handler = new TunnelHandler(ws, registry, {
         ...(options.heartbeatIntervalMs !== undefined ? { heartbeatIntervalMs: options.heartbeatIntervalMs } : {}),
+        ...(options.heartbeatTimeoutMs !== undefined ? { heartbeatTimeoutMs: options.heartbeatTimeoutMs } : {}),
         ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {}),
         serverVersion,
       });
