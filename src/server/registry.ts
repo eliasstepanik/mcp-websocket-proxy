@@ -118,6 +118,11 @@ export class Registry<T extends WsLike = WsLike> {
    * replaced: the new connection inherits its server names (ownership is per
    * `clientId`, so a reconnect may re-`server_up` the same names) and the old one
    * is reported so the caller can close it with {@link CLOSE_CODE_REPLACED}.
+   *
+   * Inherited names are marked **down** and a `server_down` is emitted for each:
+   * the new socket has advertised nothing yet, so nothing may be routed over it
+   * until the client re-`server_up`s the name after `welcome`. Ownership is kept,
+   * so the re-advertisement is a refresh rather than a conflict.
    */
   registerConnection(clientId: string, ws: T): RegisterResult<T> {
     const previous = this.clients.get(clientId);
@@ -129,7 +134,12 @@ export class Registry<T extends WsLike = WsLike> {
     this.clients.set(clientId, connection);
     for (const name of connection.servers) {
       const entry = this.servers.get(name);
-      if (entry && entry.clientId === clientId) entry.connection = connection;
+      if (!entry || entry.clientId !== clientId) continue;
+      entry.connection = connection;
+      if (entry.up) {
+        entry.up = false;
+        this.emit({ type: 'server_down', clientId, server: name, reason: REASON_CONNECTION_REPLACED });
+      }
     }
     return { connection, replaced: previous };
   }
