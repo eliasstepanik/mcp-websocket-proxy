@@ -606,6 +606,9 @@ describe('disconnect (h): a late answer must not cross connections', () => {
     await waitFor(() => app?.registry.lookup('alpha') === undefined, 'the dead connection to leave the registry', 10_000);
     await waitFor(() => app?.registry.lookup('alpha')?.up === true, 'the client to reconnect and re-advertise', 20_000);
 
+    const newSocket = socketOf(client!);
+    // The untouched `send`, so the test can inject a frame without recording it.
+    const rawSend = newSocket.send.bind(newSocket);
     const sentOnNewSocket = sniffOutgoing(client!);
     const newFrames = sniffFrames(client!);
 
@@ -619,7 +622,7 @@ describe('disconnect (h): a late answer must not cross connections', () => {
     // Now let the stale answer arrive, written straight onto the *new* socket the way
     // a leaking client would write it: it names the old id and carries a result that
     // belongs to the dead connection.
-    socketOf(client!).send(JSON.stringify({ type: 'response', id: staleId, result: { content: [{ type: 'text', text: 'STALE' }] } }));
+    rawSend(JSON.stringify({ type: 'response', id: staleId, result: { content: [{ type: 'text', text: 'STALE' }] } }));
 
     // The new call answers with its own result, untouched by the stale frame.
     await waitFor(() => sentOnNewSocket.some((frame) => frame.includes('"response"')), 'the client to answer the new request', 10_000);
