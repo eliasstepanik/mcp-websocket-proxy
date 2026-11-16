@@ -67,10 +67,8 @@ async function startStack(): Promise<void> {
 
 async function stopStack(): Promise<void> {
   await handler?.close();
-  await new Promise<void>((resolve, reject) =>
-    httpServer?.closeAllConnections?.(),
-  );
-  await new Promise<void>((resolve) => httpServer?.close(() => resolve()));
+  httpServer?.closeAllConnections?.();
+  await new Promise<void>((resolve) => (httpServer?.close(() => resolve()) ?? resolve()));
   await local?.stop();
 }
 
