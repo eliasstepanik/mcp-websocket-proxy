@@ -22,8 +22,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
+  ErrorCode,
   isJSONRPCNotification,
   isJSONRPCResultResponse,
+  McpError,
   type Notification,
   type Request,
   ResultSchema,
