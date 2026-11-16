@@ -113,10 +113,6 @@ class TestClient {
     }
   }
 
-  sawRaw(needle: string): boolean {
-    return this.rawFrames.some((frame) => frame.includes(needle));
-  }
-
   async open(): Promise<void> {
     if (this.ws.readyState === WebSocket.OPEN) return;
     await new Promise<void>((resolve, reject) => {
