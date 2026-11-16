@@ -617,8 +617,18 @@ describe('disconnect (h): a late answer must not cross connections', () => {
     const fresh = alpha.client.callTool({ name: 'slow', arguments: { ms: 1_200 } });
     await waitForFrame(newFrames, (frame) => (JSON.parse(frame) as { type?: string }).type === 'request', 'the new request frame', 10_000);
     const freshId = lastRequestId(newFrames);
-    console.log('DEBUG ids', {staleId, freshId, newFrames});
-    expect(freshId).not.toBe(staleId);
+    // Deterministic, not incidental: request ids come from one process-wide counter,
+    // so a handler built for the reconnected socket hands out ids strictly after every
+    // id any earlier connection used. A colliding id cannot even be constructed.
+    expect(freshId).toBeGreaterThan(staleId);
+    // No `request` frame on the new connection ever carried the stale id, i.e. the
+    // stale answer below has no pending request it could possibly be mistaken for.
+    expect(
+      newFrames
+        .map((frame) => JSON.parse(frame) as { type?: string; id?: unknown })
+        .filter((frame) => frame.type === 'request')
+        .map((frame) => frame.id),
+    ).not.toContain(staleId);
 
     // Now let the stale answer arrive, written straight onto the *new* socket the way
     // a leaking client would write it: it names the old id and carries a result that
