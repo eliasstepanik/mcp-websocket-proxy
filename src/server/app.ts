@@ -278,14 +278,15 @@ export function createApp(options: AppOptions): App {
     // rejected client gets a plain 401 (no WebSocket handshake at all), which the
     // client library surfaces as a failed handshake.
     if (!verifyBearer(req.headers.authorization, clientToken)) {
+      const body = 'Unauthorized: token\r\n';
       socket.write(
         'HTTP/1.1 401 Unauthorized\r\n' +
           'www-authenticate: Bearer\r\n' +
           'content-type: text/plain; charset=utf-8\r\n' +
           'connection: close\r\n' +
-          'content-length: 21\r\n' +
+          `content-length: ${Buffer.byteLength(body)}\r\n` +
           '\r\n' +
-          'Unauthorized: token\r\n',
+          body,
       );
       socket.destroy();
       return;
