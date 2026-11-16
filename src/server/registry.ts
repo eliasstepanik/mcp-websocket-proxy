@@ -30,6 +30,9 @@ export const CLOSE_CODE_REPLACED = 4002;
 /** Default `server_down` reason used when a connection disappears. */
 export const REASON_CONNECTION_LOST = 'connection_lost';
 
+/** `server_down` reason used for the names a reconnecting client inherits but has not re-advertised yet. */
+export const REASON_CONNECTION_REPLACED = 'connection_replaced';
+
 /** The minimum a handle must offer; `ws.WebSocket` satisfies it structurally. */
 export interface WsLike {
   readonly readyState: number;
