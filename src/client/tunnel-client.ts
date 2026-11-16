@@ -282,6 +282,30 @@ export class TunnelClient {
     ws.on('error', () => {
       /* `close` always follows an error and drives the reconnect */
     });
+    // A non-101 answer to the upgrade request is handed over instead of failing the
+    // handshake, so this listener owns the socket from here: it must always end it, or
+    // no `close` would ever run and the client would hang on a dead connection.
+    // A 401 is the one case the client can act on — the token is wrong or has been
+    // rotated, and dialing again a second later only repeats it — so that path logs a
+    // single line (never the token) and takes the long auth delay.
+    ws.on('unexpected-response', (_req: ClientRequest, response: IncomingMessage) => {
+      if (this.ws === ws && response.statusCode === 401) {
+        this.authRejected = true;
+        process.stderr.write(
+          `tunnel: the server answered the upgrade with 401 (check the client token); retrying in ${Math.round(AUTH_OR_REPLACE_RETRY_MS / 1000)}s\n`,
+        );
+      }
+      try {
+        response.destroy();
+      } catch {
+        /* already gone */
+      }
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    });
   }
 
   /** Backoff: 1s doubling to `maxReconnectDelayMs`, ±20% jitter; 60s after 4002/4003. */
