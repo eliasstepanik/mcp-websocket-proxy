@@ -219,7 +219,8 @@ export class LocalMcpServer implements Upstream {
     const transport = new StdioClientTransport({
       command: this.options.command,
       ...(this.options.args ? { args: this.options.args } : {}),
-      env: this.options.env ?? getDefaultEnvironment(),
+      // Merge, never replace: a configured `env` must not drop PATH/SYSTEMROOT etc.
+      env: { ...getDefaultEnvironment(), ...this.options.env },
       ...(this.options.cwd ? { cwd: this.options.cwd } : {}),
       stderr: 'pipe',
     });
