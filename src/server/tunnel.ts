@@ -46,6 +46,24 @@ export const CLOSE_CODE_PROTOCOL = 4000;
 export const CLOSE_CODE_HELLO_TIMEOUT = 4004;
 
 /**
+ * Process-wide request id source, shared by **every** {@link TunnelHandler}.
+ *
+ * Ids must be unique across *connections*, not merely within one: a handler that
+ * counts from 1 again after a reconnect hands out ids a still-lagging `response`
+ * from the previous connection may already have used, and the two would be
+ * confused for each other (wrong result, cross-session leak). One counter for
+ * the whole process makes an id identify a request for the lifetime of the
+ * process. The wire schema accepts numbers or strings (`MessageIdSchema`);
+ * numbers are kept, as everywhere else here.
+ */
+let requestCounter = 0;
+
+function nextRequestId(): number {
+  requestCounter += 1;
+  return requestCounter;
+}
+
+/**
  * A JSON-RPC error that came back from the upstream server, carrying the raw
  * `{code, message, data}` triple. The endpoint detects it through
  * {@link UpstreamRpcError.isUpstreamRpcError} and relays it unchanged.
