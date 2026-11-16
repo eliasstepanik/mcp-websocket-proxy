@@ -67,3 +67,82 @@ describe('readConfig: defaults', () => {
     expect(readConfig(env({ MCP_PROXY_PORT: '  ' })).port).toBe(8080);
   });
 });
+
+describe('readConfig: token validation', () => {
+  it('rejects a missing client token, naming the variable', () => {
+    expect(() => readConfig(env({ MCP_PROXY_CLIENT_TOKEN: undefined }))).toThrow(/MCP_PROXY_CLIENT_TOKEN is required/);
+  });
+
+  it('rejects a missing endpoint token, naming the variable', () => {
+    expect(() => readConfig(env({ MCP_PROXY_ENDPOINT_TOKEN: undefined }))).toThrow(/MCP_PROXY_ENDPOINT_TOKEN is required/);
+  });
+
+  it('rejects a blank token like a missing one', () => {
+    expect(() => readConfig(env({ MCP_PROXY_CLIENT_TOKEN: '   ' }))).toThrow(/MCP_PROXY_CLIENT_TOKEN is required/);
+  });
+
+  it('rejects a client token shorter than the minimum', () => {
+    const short = 'x'.repeat(MIN_TOKEN_LENGTH - 1);
+    expect(() => readConfig(env({ MCP_PROXY_CLIENT_TOKEN: short }))).toThrow(/MCP_PROXY_CLIENT_TOKEN is too short.*32/);
+  });
+
+  it('rejects a short endpoint token', () => {
+    expect(() => readConfig(env({ MCP_PROXY_ENDPOINT_TOKEN: 'short' }))).toThrow(/MCP_PROXY_ENDPOINT_TOKEN is too short/);
+  });
+
+  it('accepts a token of exactly the minimum length', () => {
+    const exact = 'z'.repeat(MIN_TOKEN_LENGTH);
+    expect(readConfig(env({ MCP_PROXY_CLIENT_TOKEN: exact })).clientToken).toBe(exact);
+  });
+
+  it('rejects two identical tokens', () => {
+    expect(() => readConfig(env({ MCP_PROXY_ENDPOINT_TOKEN: CLIENT_TOKEN }))).toThrow(/must be different/);
+  });
+
+  it('never puts a token value in an error message', () => {
+    const cases: Record<string, string | undefined>[] = [
+      { MCP_PROXY_CLIENT_TOKEN: 's'.repeat(8) },
+      { MCP_PROXY_ENDPOINT_TOKEN: CLIENT_TOKEN },
+      { MCP_PROXY_CLIENT_TOKEN: undefined },
+    ];
+    for (const override of cases) {
+      let message = '';
+      try {
+        readConfig(env(override));
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigError);
+        message = (error as Error).message;
+      }
+      expect(message).not.toContain(CLIENT_TOKEN);
+      expect(message).not.toContain(ENDPOINT_TOKEN);
+    }
+  });
+});
+
+describe('readConfig: numeric and level validation', () => {
+  it('rejects a non-numeric port', () => {
+    expect(() => readConfig(env({ MCP_PROXY_PORT: 'http' }))).toThrow(/MCP_PROXY_PORT/);
+  });
+
+  it('rejects an out-of-range port', () => {
+    expect(() => readConfig(env({ MCP_PROXY_PORT: '70000' }))).toThrow(/MCP_PROXY_PORT/);
+  });
+
+  it('rejects a non-positive interval', () => {
+    expect(() => readConfig(env({ MCP_PROXY_REQUEST_TIMEOUT_MS: '0' }))).toThrow(/MCP_PROXY_REQUEST_TIMEOUT_MS/);
+  });
+
+  it('rejects a fractional interval', () => {
+    expect(() => readConfig(env({ MCP_PROXY_HEARTBEAT_INTERVAL_MS: '1.5' }))).toThrow(/MCP_PROXY_HEARTBEAT_INTERVAL_MS/);
+  });
+
+  it('rejects a heartbeat timeout that is not longer than the interval', () => {
+    expect(() =>
+      readConfig(env({ MCP_PROXY_HEARTBEAT_INTERVAL_MS: '5000', MCP_PROXY_HEARTBEAT_TIMEOUT_MS: '5000' })),
+    ).toThrow(/MCP_PROXY_HEARTBEAT_TIMEOUT_MS/);
+  });
+
+  it('rejects an unknown log level', () => {
+    expect(() => readConfig(env({ MCP_PROXY_LOG_LEVEL: 'trace' }))).toThrow(/MCP_PROXY_LOG_LEVEL/);
+  });
+});
