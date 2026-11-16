@@ -50,6 +50,8 @@ export interface AppOptions {
   upstreams?: TunnelUpstreams;
   /** Tunnel keepalive interval, forwarded to every {@link TunnelHandler}. */
   heartbeatIntervalMs?: number;
+  /** How long a tunnel may go without answering a ping, forwarded to every {@link TunnelHandler}. */
+  heartbeatTimeoutMs?: number;
   /** Default per-request deadline, forwarded to every {@link TunnelHandler}. */
   requestTimeoutMs?: number;
   /**
