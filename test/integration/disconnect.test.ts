@@ -226,6 +226,32 @@ function sniffFrames(tunnel: TunnelClient): string[] {
 }
 
 /**
+ * Records every frame `tunnel` writes to the socket it holds *right now*, by
+ * wrapping that socket's `send`. A frame the client writes to a socket it has
+ * already dropped is therefore invisible here, which is exactly the point: such a
+ * frame must never reach the server.
+ */
+function sniffOutgoing(tunnel: TunnelClient): string[] {
+  const sent: string[] = [];
+  const ws = socketOf(tunnel) as unknown as { send(data: string): void };
+  const original = ws.send.bind(ws);
+  ws.send = (data: string): void => {
+    sent.push(data);
+    original(data);
+  };
+  return sent;
+}
+
+/** The wire id of the last `request` frame in `frames` (the server's own counter). */
+function lastRequestId(frames: string[]): number {
+  for (let i = frames.length - 1; i >= 0; i -= 1) {
+    const frame = JSON.parse(frames[i]!) as { type?: string; id?: unknown };
+    if (frame.type === 'request' && typeof frame.id === 'number') return frame.id;
+  }
+  throw new Error('no request frame was recorded');
+}
+
+/**
  * A TCP proxy in front of `/tunnel` that can stop forwarding **without closing
  * anything**: neither side ever sees a FIN, so the client's socket stays open and
  * silent forever. That is the "silently dropped socket" the heartbeat must catch.
