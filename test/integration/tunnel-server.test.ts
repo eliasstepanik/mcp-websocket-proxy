@@ -60,7 +60,7 @@ class TestClient {
       const text = typeof data === 'string' ? data : data.toString('utf8');
       let msg: ServerToClient;
       try {
-        msg = parseTunnelMessage(text, 'out');
+        msg = parseTunnelMessage(text, 'out') as ServerToClient;
       } catch {
         this.badFrames.push(text);
         return;
