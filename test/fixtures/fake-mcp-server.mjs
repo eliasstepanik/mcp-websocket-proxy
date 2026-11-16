@@ -227,4 +227,10 @@ if (process.env.FIXTURE_START_LOG) {
   writeFileSync(process.env.FIXTURE_START_LOG, `${process.pid}\n`, { flag: 'a' });
 }
 
+// Crash-loop simulation: exit shortly after the handshake so the supervisor has to
+// restart a child that *did* initialise successfully.
+if (process.env.FIXTURE_CRASH_MS) {
+  setTimeout(() => process.exit(1), Number(process.env.FIXTURE_CRASH_MS)).unref?.();
+}
+
 await server.connect(new StdioServerTransport());
