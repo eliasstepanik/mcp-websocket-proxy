@@ -93,7 +93,7 @@ export interface FilesystemServerConfig {
   enabled: boolean;
   /** Tunnel name it publishes under. */
   name: string;
-  /** Absolute roots it may serve; required when enabled. */
+  /** Roots it may serve; required when enabled. */
   roots: string[];
 }
 
@@ -102,7 +102,7 @@ export interface ClientLogConfig {
   level: LogLevel;
   /** Optional log file; when absent only the console is written. */
   file?: string | undefined;
-  /** Rotation size in bytes ({@link LOG_MAX_BYTES}). */
+  /** Rotate once the file reaches this size in bytes ({@link LOG_MAX_BYTES}). */
   maxBytes: number;
   /** Rotated files to keep ({@link LOG_MAX_BACKUPS}). */
   maxBackups: number;
@@ -122,7 +122,7 @@ export interface ClientConfig {
   clientId: string;
   log: ClientLogConfig;
   filesystem: FilesystemServerConfig;
-  /** Local stdio servers, keyed by tunnel name (excludes the filesystem server). */
+  /** Local stdio servers, keyed by tunnel name (the filesystem server is separate). */
   servers: Map<string, ClientServerConfig>;
 }
 
@@ -130,6 +130,8 @@ export interface ClientConfig {
 export interface ConfigCheck {
   ok: boolean;
   errors: string[];
+  /** The parsed configuration, present only when `ok`. */
+  config?: ClientConfig;
 }
 
 /** Names are compared case-insensitively and trimmed, so `Files` == `files`. */
@@ -142,18 +144,14 @@ export function normalizeServerName(name: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Replace every `${env:VAR}` in `value`.
- *
- * @param errors problems are appended, never thrown: `--check` must report all
- *               of them at once. The placeholder is left out of the result so
- *               validation can keep going with the remaining fields.
+ * Replace every `${env:VAR}` in `value`. A missing variable is reported through
+ * `errors` (so `--check` can list all problems at once) and expands to `''`.
  */
 function expandString(value: string, env: NodeJS.ProcessEnv, errors: string[], where: string): string {
   return value.replace(ENV_PLACEHOLDER_RE, (_match, name: string) => {
     const raw = env[name];
     if (raw === undefined) {
-      // The variable name is the actionable part; the value does not exist, and
-      // no other value is ever echoed.
+      // The variable name is the actionable part; no value is ever echoed.
       errors.push(`${where}: environment variable ${name} is not set`);
       return '';
     }
@@ -161,13 +159,13 @@ function expandString(value: string, env: NodeJS.ProcessEnv, errors: string[], w
   });
 }
 
-/** Deep-walk a parsed document and expand every string value (keys are literal). */
+/** Deep-walk a parsed document and expand every string value (keys stay literal). */
 function expandValue(value: unknown, env: NodeJS.ProcessEnv, errors: string[], where: string): unknown {
-  if (typeof value === 'string') return expandString(value, env, errors, where);
+  if (typeof value === 'string') return expandString(value, env, errors, where || 'config');
   if (Array.isArray(value)) return value.map((item, index) => expandValue(item, env, errors, `${where}[${index}]`));
-  if (value !== null && typeof value === 'object') {
+  if (isRecord(value)) {
     const out: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    for (const [key, item] of Object.entries(value)) {
       out[key] = expandValue(item, env, errors, where ? `${where}.${key}` : key);
     }
     return out;
@@ -176,7 +174,7 @@ function expandValue(value: unknown, env: NodeJS.ProcessEnv, errors: string[], w
 }
 
 // ---------------------------------------------------------------------------
-// Field helpers (each pushes a message instead of throwing)
+// Field helpers (each reports a problem instead of throwing)
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -191,53 +189,45 @@ function readString(
   options: { required?: boolean; default?: string } = {},
 ): string | undefined {
   const raw = source[key];
+  const path = where ? `${where}.${key}` : key;
   if (raw === undefined || raw === null) {
-    if (options.required) errors.push(`${where}.${key} is required`);
+    if (options.required) errors.push(`${path} is required`);
     return options.default;
   }
   if (typeof raw !== 'string') {
-    errors.push(`${where}.${key} must be a string`);
+    errors.push(`${path} must be a string`);
     return options.default;
   }
-  if (raw.trim() === '' && options.required) {
-    errors.push(`${where}.${key} must not be empty`);
+  if (options.required && raw.trim() === '') {
+    errors.push(`${path} must not be empty`);
     return options.default;
   }
   return raw;
 }
 
-function readBoolean(
-  source: Record<string, unknown>,
-  key: string,
-  where: string,
-  errors: string[],
-  fallback: boolean,
-): boolean {
+function readBoolean(source: Record<string, unknown>, key: string, where: string, errors: string[], fallback: boolean): boolean {
   const raw = source[key];
+  const path = where ? `${where}.${key}` : key;
   if (raw === undefined || raw === null) return fallback;
   if (typeof raw !== 'boolean') {
-    errors.push(`${where}.${key} must be true or false`);
+    errors.push(`${path} must be true or false`);
     return fallback;
   }
   return raw;
 }
 
-function readStringArray(
-  source: Record<string, unknown>,
-  key: string,
-  where: string,
-  errors: string[],
-): string[] {
+function readStringArray(source: Record<string, unknown>, key: string, where: string, errors: string[]): string[] {
   const raw = source[key];
+  const path = where ? `${where}.${key}` : key;
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
-    errors.push(`${where}.${key} must be a list of strings`);
+    errors.push(`${path} must be a list of strings`);
     return [];
   }
   const out: string[] = [];
   raw.forEach((item, index) => {
     if (typeof item !== 'string') {
-      errors.push(`${where}.${key}[${index}] must be a string`);
+      errors.push(`${path}[${index}] must be a string`);
       return;
     }
     out.push(item);
@@ -245,22 +235,18 @@ function readStringArray(
   return out;
 }
 
-function readStringMap(
-  source: Record<string, unknown>,
-  key: string,
-  where: string,
-  errors: string[],
-): Record<string, string> {
+function readStringMap(source: Record<string, unknown>, key: string, where: string, errors: string[]): Record<string, string> {
   const raw = source[key];
+  const path = where ? `${where}.${key}` : key;
   const out: Record<string, string> = {};
   if (raw === undefined || raw === null) return out;
   if (!isRecord(raw)) {
-    errors.push(`${where}.${key} must be a map of string keys to string values`);
+    errors.push(`${path} must be a map of names to string values`);
     return out;
   }
   for (const [name, value] of Object.entries(raw)) {
     if (typeof value !== 'string') {
-      errors.push(`${where}.${key}.${name} must be a string`);
+      errors.push(`${path}.${name} must be a string`);
       continue;
     }
     out[name] = value;
@@ -283,7 +269,7 @@ function readSection(root: Record<string, unknown>, key: string, errors: string[
 // Sections
 // ---------------------------------------------------------------------------
 
-/** `ws://` is only safe on a host the token never has to cross. */
+/** Plain `ws://` is only acceptable for a host the token never has to cross. */
 function validateUrl(url: string, allowInsecure: boolean, errors: string[]): void {
   let parsed: URL;
   try {
@@ -296,30 +282,21 @@ function validateUrl(url: string, allowInsecure: boolean, errors: string[]): voi
     errors.push(`server.url must start with ws:// or wss://, got ${JSON.stringify(parsed.protocol)}`);
     return;
   }
-  if (parsed.protocol === 'ws:' && !allowInsecure) {
-    const host = parsed.hostname;
-    if (!LOCAL_HOSTS.has(host)) {
-      errors.push(
-        `server.url uses unencrypted ws:// for host ${JSON.stringify(host)}: use wss://, or set server.allowInsecure: true ` +
-          'only on a trusted network',
-      );
-    }
+  if (parsed.protocol === 'ws:' && !allowInsecure && !LOCAL_HOSTS.has(parsed.hostname)) {
+    errors.push(
+      `server.url uses unencrypted ws:// for host ${JSON.stringify(parsed.hostname)}: use wss://, or set ` +
+        'server.allowInsecure: true only on a network you trust',
+    );
   }
 }
 
 function parseServerSection(root: Record<string, unknown>, errors: string[]): ClientConfig['server'] {
   const section = readSection(root, 'server', errors);
   const url = readString(section, 'url', 'server', errors, { required: true }) ?? '';
+  // Length is the server's business; the client only requires *a* token.
   const token = readString(section, 'token', 'server', errors, { required: true }) ?? '';
   const allowInsecure = readBoolean(section, 'allowInsecure', 'server', errors, false);
-  if (url.trim() === '' && !errors.some((e) => e.startsWith('server.url'))) {
-    errors.push('server.url is required');
-  }
-  if (url) validateUrl(url.trim(), allowInsecure, errors);
-  if (token.trim() === '' && !errors.some((e) => e.startsWith('server.token'))) {
-    // Length is the server's business; the client only needs *a* token.
-    errors.push('server.token is required: set it (usually as ${env:MCP_PROXY_CLIENT_TOKEN})');
-  }
+  if (url.trim()) validateUrl(url.trim(), allowInsecure, errors);
   return { url: url.trim(), token, allowInsecure };
 }
 
@@ -327,12 +304,11 @@ function parseLogSection(root: Record<string, unknown>, errors: string[]): Clien
   const section = readSection(root, 'log', errors);
   const rawLevel = readString(section, 'level', 'log', errors, { default: 'info' }) ?? 'info';
   const level = rawLevel.trim().toLowerCase();
-  if (!(LOG_LEVELS as readonly string[]).includes(level)) {
-    errors.push(`log.level must be one of ${LOG_LEVELS.join(', ')}, got ${JSON.stringify(rawLevel)}`);
-  }
+  const known = (LOG_LEVELS as readonly string[]).includes(level);
+  if (!known) errors.push(`log.level must be one of ${LOG_LEVELS.join(', ')}, got ${JSON.stringify(rawLevel)}`);
   const file = readString(section, 'file', 'log', errors);
   return {
-    level: (LOG_LEVELS as readonly string[]).includes(level) ? (level as LogLevel) : 'info',
+    level: (known ? level : 'info') as LogLevel,
     ...(file !== undefined && file.trim() !== '' ? { file: file.trim() } : {}),
     maxBytes: LOG_MAX_BYTES,
     maxBackups: LOG_MAX_BACKUPS,
@@ -367,20 +343,22 @@ function parseServersSection(root: Record<string, unknown>, errors: string[]): M
     const name = normalizeServerName(key);
     if (!SERVER_NAME_RE.test(name)) {
       errors.push(
-        `invalid server name ${JSON.stringify(key)}: must match ${SERVER_NAME_RE} (lowercase letters, digits, '_' and '-', max 63 characters)`,
+        `invalid server name ${JSON.stringify(key)}: must match ${SERVER_NAME_RE} ` +
+          '(lowercase letters, digits, "_" and "-", at most 63 characters)',
       );
     }
     if (servers.has(name)) {
-      errors.push(`duplicate server name ${JSON.stringify(name)}: server names must be unique after trimming and lowercasing`);
+      errors.push(`duplicate server name ${JSON.stringify(name)}: names must be unique after trimming and lowercasing`);
       continue;
     }
     const command = readString(value, 'command', where, errors, { required: true }) ?? '';
+    const cwd = readString(value, 'cwd', where, errors)?.trim();
     servers.set(name, {
       name,
       command: command.trim(),
       args: readStringArray(value, 'args', where, errors),
       env: readStringMap(value, 'env', where, errors),
-      ...(readString(value, 'cwd', where, errors)?.trim() ? { cwd: readString(value, 'cwd', where, errors)!.trim() } : {}),
+      ...(cwd ? { cwd } : {}),
       inheritEnv: readBoolean(value, 'inheritEnv', where, errors, false),
     });
   }
@@ -399,12 +377,8 @@ export function checkConfigText(text: string, env: NodeJS.ProcessEnv = process.e
   } catch (error) {
     return { ok: false, errors: [`config is not valid YAML or JSON: ${(error as Error).message}`] };
   }
-  if (document === null || document === undefined) {
-    return { ok: false, errors: ['config file is empty'] };
-  }
-  if (!isRecord(document)) {
-    return { ok: false, errors: ['config must be a map of settings'] };
-  }
+  if (document === null || document === undefined) return { ok: false, errors: ['config file is empty'] };
+  if (!isRecord(document)) return { ok: false, errors: ['config must be a map of settings'] };
 
   const errors: string[] = [];
   const expanded = expandValue(document, env, errors, '') as Record<string, unknown>;
@@ -418,57 +392,42 @@ export function checkConfigText(text: string, env: NodeJS.ProcessEnv = process.e
 
   if (filesystem.enabled && servers.has(normalizeServerName(filesystem.name))) {
     errors.push(
-      `server name ${JSON.stringify(filesystem.name)} is already used by the filesystem server: rename it or one of the servers`,
+      `server name ${JSON.stringify(filesystem.name)} is already used by the filesystem server: rename it or the colliding server`,
     );
   }
   if (servers.size === 0 && !filesystem.enabled) {
     errors.push('config exposes no servers: add an entry under `servers` or enable the filesystem server');
   }
 
-  const config: ClientConfig = {
-    server,
-    clientId,
-    log,
-    filesystem,
-    servers,
-  };
-  return { ok: errors.length === 0, errors, ...(errors.length === 0 ? { config } : {}) } as ConfigCheck & {
-    config: ClientConfig;
-  };
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, errors: [], config: { server, clientId, log, filesystem, servers } };
 }
 
 /**
  * Read and validate `path`.
  *
- * @throws {ConfigError} when the file cannot be read, is not valid YAML/JSON, or
+ * @throws {ConfigError} when the file cannot be read, is not valid YAML/JSON or
  *         fails any rule described at the top of this module. The message lists
  *         every problem found and never a secret value.
  */
 export function loadClientConfig(path: string, env: NodeJS.ProcessEnv = process.env): ClientConfig {
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch (error) {
-    throw new ConfigError(`cannot read config file ${path}: ${(error as Error).message}`);
-  }
-
-  const check = checkConfigText(text, env) as ConfigCheck & { config?: ClientConfig };
-  if (!check.ok || !check.config) {
-    throw new ConfigError(`${path}: ${check.errors.join('; ')}`);
-  }
+  const check = checkPath(path, env);
+  if (!check.ok || !check.config) throw new ConfigError(`${path}: ${check.errors.join('; ')}`);
   return check.config;
 }
 
-/**
- * Validate `path` for `--check`: reports every problem instead of throwing.
- */
+/** Validate `path` for `--check`: reports every problem instead of throwing. */
 export function checkConfig(path: string, env: NodeJS.ProcessEnv = process.env): ConfigCheck {
+  const check = checkPath(path, env);
+  return { ok: check.ok, errors: check.errors };
+}
+
+function checkPath(path: string, env: NodeJS.ProcessEnv): ConfigCheck {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch (error) {
     return { ok: false, errors: [`cannot read config file ${path}: ${(error as Error).message}`] };
   }
-  const check = checkConfigText(text, env) as ConfigCheck & { config?: ClientConfig };
-  return { ok: check.ok, errors: check.errors };
+  return checkConfigText(text, env);
 }
