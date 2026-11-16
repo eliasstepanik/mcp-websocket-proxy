@@ -428,25 +428,39 @@ export class TunnelHandler {
   }
 
   private startHeartbeat(): void {
-    this.isAlive = true;
     this.heartbeatTimer = setInterval(() => {
-      if (!this.isAlive) {
-        try {
-          this.ws.terminate();
-        } catch {
-          /* already gone */
-        }
-        this.cleanup();
-        return;
-      }
-      this.isAlive = false;
       try {
         this.ws.ping();
       } catch {
         /* already gone */
       }
+      // The socket has `heartbeatTimeoutMs` to answer this ping. A pong clears the
+      // watchdog; a socket that never answers is a zombie (sleep/resume, a NAT that
+      // dropped its mapping, a cable pulled without a FIN) and is terminated.
+      this.armLivenessTimer();
     }, this.heartbeatIntervalMs);
     this.heartbeatTimer.unref?.();
+  }
+
+  private armLivenessTimer(): void {
+    this.clearLivenessTimer();
+    this.livenessTimer = setTimeout(() => {
+      this.livenessTimer = undefined;
+      try {
+        this.ws.terminate();
+      } catch {
+        /* already gone */
+      }
+      this.cleanup();
+    }, this.heartbeatTimeoutMs);
+    this.livenessTimer.unref?.();
+  }
+
+  private clearLivenessTimer(): void {
+    if (this.livenessTimer) {
+      clearTimeout(this.livenessTimer);
+      this.livenessTimer = undefined;
+    }
   }
 
   private cleanup(): void {
@@ -460,6 +474,7 @@ export class TunnelHandler {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = undefined;
     }
+    this.clearLivenessTimer();
     // Only unregister when this connection is still the registry's: a replaced one
     // must not tear down the connection that took its place.
     if (this.clientId && this.registry.get(this.clientId)?.ws === this.ws) {
