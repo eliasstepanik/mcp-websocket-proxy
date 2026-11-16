@@ -267,8 +267,7 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
   };
 }
 
-function readProgressToken(params: unknown): string | number | undefined {
-  const meta = isRecord(params) ? params._meta : undefined;
+function readProgressToken(params: unknown): string | number | undefined {  const meta = isRecord(params) ? params._meta : undefined;
   if (!isRecord(meta)) return undefined;
   const token = meta.progressToken;
   return typeof token === 'string' || typeof token === 'number' ? token : undefined;
