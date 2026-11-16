@@ -85,6 +85,7 @@ export function createLogger(log: ClientLogConfig, secrets: readonly string[] = 
   /** `file` -> `file.1` -> ... -> `file.<maxBackups>`; the oldest backup is dropped. */
   const rotate = (): void => {
     const path = file as string;
+    let rotated = true;
     for (let index = maxBackups; index >= 1; index -= 1) {
       const from = index === 1 ? path : `${path}.${index - 1}`;
       const to = `${path}.${index}`;
