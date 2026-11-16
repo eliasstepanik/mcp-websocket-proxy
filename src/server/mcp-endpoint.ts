@@ -177,11 +177,6 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
   const sessions = new Map<string, McpEndpointSession>();
   const resolveUpstream = typeof options.upstream === 'function' ? (options.upstream as () => Upstream) : () => options.upstream as Upstream;
 
-  const bindSession = (session: McpEndpointSession): void => {
-    if (session.sessionId) sessions.set(session.sessionId, session);
-    options.onSession?.(session);
-  };
-
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const headerSessionId = firstHeader(req, 'mcp-session-id');
 
