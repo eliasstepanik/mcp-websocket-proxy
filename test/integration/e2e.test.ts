@@ -126,7 +126,12 @@ async function rawInitialize(name: string): Promise<Response> {
 async function rawPost(name: string, sessionId: string, body: unknown): Promise<Response> {
   return await fetch(`${baseUrl}/mcp/${name}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-session-id': sessionId },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      'mcp-session-id': sessionId,
+      authorization: bearerHeader(ENDPOINT_TOKEN),
+    },
     body: JSON.stringify(body),
   });
 }
