@@ -217,7 +217,13 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
 
       if (!session) {
         if (!isInitializeRequest(body)) {
-          sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: unknown or missing Mcp-Session-Id'));
+          // A session id we do not know means the session is gone: 404 tells the client
+          // to re-initialize (spec). A *missing* header is simply a bad request.
+          if (headerSessionId) {
+            sendJson(res, 404, jsonRpcError(null, -32000, 'Not Found: unknown Mcp-Session-Id'));
+          } else {
+            sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: missing Mcp-Session-Id'));
+          }
           return;
         }
         let upstream: Upstream;
@@ -225,8 +231,18 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
           upstream = resolveUpstream();
           void upstream.info; // fails fast with a proxy error when nothing is upstream
         } catch (error) {
+          const reason = proxyReasonOf(error);
+          if (reason !== undefined && isRetryableOffline(reason)) {
+            sendJson(
+              res,
+              503,
+              proxyJsonRpcError(null, reason, (error as Error).message),
+              { 'retry-after': String(OFFLINE_RETRY_AFTER_SECONDS) },
+            );
+            return;
+          }
           const code = typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : -32603;
-          sendJson(res, 503, jsonRpcError(null, code, (error as Error).message, (error as { data?: unknown }).data));
+          sendJson(res, 500, jsonRpcError(null, code, (error as Error).message));
           return;
         }
         const created = await createEndpointSession(upstream, {
