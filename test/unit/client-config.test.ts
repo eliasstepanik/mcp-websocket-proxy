@@ -264,6 +264,11 @@ describe('server names', () => {
     expect(check.errors.join('\n')).toContain('already used by the filesystem server');
   });
 
+  it('rejects a filesystem.name that is not a legal server name', () => {
+    const check = checkConfigText(minimal({ filesystem: { roots: ['/tmp'], name: 'Bad Name' } }), baseEnv());
+    expect(check.errors.join('\n')).toContain('filesystem.name must match');
+  });
+
   it('allows a clash when the filesystem server is disabled', () => {
     const check = checkConfigText(
       minimal({ filesystem: { enabled: false }, servers: { filesystem: { command: 'a' } } }),
