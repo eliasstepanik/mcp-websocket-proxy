@@ -65,6 +65,15 @@ export interface LocalServerOptions {
 
 const DEFAULT_RESTART_DELAYS = [250, 500, 1000, 2000, 5000, 10000];
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_STABLE_UPTIME_MS = 30_000;
+/** Maximum size of one pending (newline-less) stderr line before it is force-flushed. */
+const MAX_STDERR_BUFFER_BYTES = 64 * 1024;
+
+/** Per-spawn stderr state: the pid must come from *this* transport, never from a later one. */
+interface StderrSink {
+  transport: StdioClientTransport;
+  buffer: string;
+}
 
 export class LocalMcpServer implements Upstream {
   readonly name: string;
