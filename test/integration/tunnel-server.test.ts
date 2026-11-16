@@ -402,6 +402,7 @@ describe('sendRequest', () => {
     expect(frame.wantProgress).toBe(true);
     client.send({ type: 'progress', id: frame.id, params: { progress: 1, total: 2, message: 'half' } });
     client.send({ type: 'progress', id: frame.id, params: { progress: 2, total: 2 } });
+    await waitFor(() => seen.length === 2, 'progress frames to be delivered');
     expect(seen).toEqual([
       { progress: 1, total: 2, message: 'half' },
       { progress: 2, total: 2 },
