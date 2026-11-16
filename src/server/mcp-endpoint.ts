@@ -368,7 +368,15 @@ function toWireError(error: unknown): Error {
   });
 }
 
-/** Strip every repeated `MCP error -1234: ` prefix from a message. */
+/**
+ * Strip every repeated `MCP error -1234: ` prefix from a message.
+ *
+ * NOTE: this is only a heuristic for the T1 stdio hop (the SDK's `McpError` prefixes
+ * `message` once per hop, and the prefix accumulates across fixture -> client ->
+ * endpoint). T2's WebSocket tunnel must instead carry the raw `{code, message, data}`
+ * triple across the wire so no prefix is ever added, rather than relying on this
+ * message-stripping to undo it.
+ */
 function stripMcpErrorPrefixes(message: string): string {
   let out = message;
   for (;;) {
