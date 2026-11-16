@@ -169,7 +169,7 @@ export class TunnelHandler {
 
     this.ws.on('message', (data: unknown) => this.onMessage(data));
     this.ws.on('pong', () => {
-      this.isAlive = true;
+      this.lastPongAt = Date.now();
     });
     this.ws.on('close', () => this.cleanup());
     this.ws.on('error', () => this.cleanup());
