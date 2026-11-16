@@ -174,15 +174,13 @@ export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
   }
   if (config.filesystem.enabled) {
     const name = config.filesystem.name;
+    const stateLevel = (state: LocalServerState): LogLevel => (state === 'failed' ? 'error' : state === 'backoff' ? 'warn' : 'info');
     servers.set(
       name,
-      new LocalMcpServer({
-        name,
-        command: process.execPath,
-        args: [filesystemServerPath(), ...config.filesystem.roots],
+      createFilesystemServer(config.filesystem, {
         onStderrLine: (line) => log({ level: 'debug', message: 'child stderr', server: name, line }),
-        onStateChange: (state) =>
-          log({ level: state === 'failed' ? 'error' : state === 'backoff' ? 'warn' : 'info', message: `local server ${state}`, server: name }),
+        onStateChange: (state, detail) =>
+          log({ level: stateLevel(state), message: `local server ${state}`, server: name, ...(detail !== undefined ? { detail } : {}) }),
       }),
     );
   }
