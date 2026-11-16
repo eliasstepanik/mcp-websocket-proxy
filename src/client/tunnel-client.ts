@@ -86,6 +86,23 @@ function toText(data: unknown): string {
 }
 
 /**
+ * Strip every repeated `MCP error -1234: ` prefix from a message.
+ *
+ * The SDK's `McpError` prefixes its message once per hop (fixture -> local SDK
+ * client), so by the time a failure reaches here it may carry the prefix several
+ * times. The tunnel relays the raw `{code, message, data}` triple, so the message
+ * must go out unprefixed (see `src/server/mcp-endpoint.ts` for the T1 equivalent).
+ */
+function stripMcpErrorPrefixes(message: string): string {
+  let out = message;
+  for (;;) {
+    const stripped = out.replace(/^MCP error -?\d+: /, '');
+    if (stripped === out) return out;
+    out = stripped;
+  }
+}
+
+/**
  * Turn whatever a local server threw into the wire error object.
  *
  * Upstream RPC errors and proxy errors both carry a raw `{code, message, data}`
@@ -93,7 +110,7 @@ function toText(data: unknown): string {
  * sees the upstream code. Anything else becomes an internal error.
  */
 function toWireError(error: unknown): { code: number; message: string; data?: unknown } {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = stripMcpErrorPrefixes(error instanceof Error ? error.message : String(error));
   if (typeof error === 'object' && error !== null) {
     const code = (error as { code?: unknown }).code;
     if (typeof code === 'number') {
