@@ -232,6 +232,14 @@ export class LocalMcpServer implements Upstream {
     // One stderr sink per spawn: the pid in the prefix and the partial-line buffer
     // belong to *this* child, so a dead child's late/partial output can neither be
     // attributed to the next child nor glue onto its first line.
+    const previous = this.stderrSink;
+    if (previous?.buffer) {
+      // Flush the dead child's trailing partial line under its own pid before the new
+      // child starts writing into a fresh buffer.
+      const dangling = previous.buffer;
+      previous.buffer = '';
+      this.emitStderrLine(previous, dangling);
+    }
     const stderrSink: StderrSink = { transport, buffer: '' };
     this.stderrSink = stderrSink;
 
