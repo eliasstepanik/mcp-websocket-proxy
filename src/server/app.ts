@@ -99,10 +99,20 @@ const MCP_ROUTE_RE = /^\/mcp\/([^/?#]+)\/?$/;
  * upgrade on the same listener. The returned server is **not** listening yet;
  * the caller calls `httpServer.listen(...)`.
  */
-export function createApp(options: AppOptions = {}): App {
+export function createApp(options: AppOptions): App {
   const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   const registry = options.registry ?? new Registry<WsLike>();
   const upstreams = options.upstreams ?? new TunnelUpstreams(registry);
+  const serverVersion = options.serverVersion ?? 'unknown';
+  // Fail loudly at construction rather than accepting a connection nobody asked for.
+  if (!options.clientToken || !options.endpointToken) {
+    throw new Error('createApp requires both clientToken and endpointToken');
+  }
+  if (options.clientToken === options.endpointToken) {
+    throw new Error('createApp requires clientToken and endpointToken to be different');
+  }
+  const clientToken = options.clientToken;
+  const endpointToken = options.endpointToken;
 
   /** One endpoint handler per server name, created on first use. */
   const endpoints = new Map<string, McpEndpointHandler>();
