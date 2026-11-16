@@ -106,6 +106,17 @@ function toText(data: unknown): string {
   return String(data);
 }
 
+/**
+ * Shorten a close reason to what the WebSocket spec allows (123 bytes).
+ * Protocol-error reasons carry the zod detail and are routinely longer.
+ */
+function safeReason(reason: string): string {
+  if (Buffer.byteLength(reason, 'utf8') <= 123) return reason;
+  let out = reason;
+  while (Buffer.byteLength(out + '…', 'utf8') > 123) out = out.slice(0, -1);
+  return `${out}…`;
+}
+
 export class TunnelHandler {
   private readonly ws: WebSocket;
   private readonly registry: Registry<WsLike>;
