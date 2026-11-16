@@ -244,6 +244,17 @@ describe('built-in filesystem server through the tunnel', () => {
 });
 
 describe('filesystem config rules', () => {
+  it('accepts the documented example file (config.example.yaml)', () => {
+    const example = new URL('../../config.example.yaml', import.meta.url);
+    const check = checkConfigText(readFileSync(example, 'utf8'), {
+      ...testEnv(),
+      DATABASE_URL: 'postgres://me:secret@db.internal/app',
+    });
+    expect(check.errors).toEqual([]);
+    expect(check.config?.filesystem.enabled).toBe(true);
+    expect([...check.config?.servers.keys() ?? []]).toEqual(['time', 'postgres']);
+  });
+
   it('rejects an enabled filesystem server with no roots', () => {
     const check = checkConfigText(
       `server:\n  url: wss://warren.example.com/tunnel\n  token: \${env:${TOKEN_ENV}}\nfilesystem: { enabled: true }\n`,
