@@ -65,6 +65,15 @@ const JSONRPC_METHOD_NOT_FOUND = -32601;
 /** JSON-RPC "internal error": the fallback when a failure carries no raw triple. */
 const JSONRPC_INTERNAL_ERROR = -32603;
 
+/** TCP keepalive probe interval asked of the OS once keepalive kicks in. */
+const TCP_KEEPALIVE_INITIAL_DELAY_MS = 15_000;
+
+/** Watchdog fallback when a `welcome` somehow carries no heartbeat interval. */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** The watchdog allows this many missed server pings before declaring the socket dead. */
+const LIVENESS_MISS_FACTOR = 2;
+
 export type TunnelClientState = 'connecting' | 'connected' | 'reconnecting' | 'stopped';
 
 export interface TunnelClientOptions {
