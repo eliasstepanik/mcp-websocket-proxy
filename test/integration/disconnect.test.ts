@@ -42,6 +42,8 @@ let app: App | undefined;
 let baseUrl = '';
 let tunnelUrl = '';
 let client: TunnelClient | undefined;
+/** Every tunnel started since the last `stopTunnel`, so none can leak. */
+let tunnels: TunnelClient[] = [];
 let locals: Map<string, LocalMcpServer>;
 
 // ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ async function startTunnel(options: { clientId?: string; servers?: Map<string, L
     servers: locals,
   });
   client = tunnel;
+  tunnels.push(tunnel);
   await waitFor(
     () => app?.registry.lookup('alpha')?.up === true && app?.registry.lookup('beta')?.up === true,
     'both fixture servers to be registered',
@@ -113,7 +116,7 @@ async function startTunnel(options: { clientId?: string; servers?: Map<string, L
 }
 
 async function stopTunnel(): Promise<void> {
-  client?.stop();
+  for (const tunnel of tunnels.splice(0)) tunnel.stop();
   client = undefined;
   for (const local of locals?.values() ?? []) await local.stop();
 }
@@ -187,6 +190,17 @@ async function errorOf(promise: Promise<unknown>): Promise<McpError> {
   return (await promise.then(() => undefined).catch((e: unknown) => e)) as McpError;
 }
 
+/** Waits until `predicate` matches one of the sniffed `frames`. */
+async function waitForFrame(frames: string[], predicate: (frame: string) => boolean, label: string, timeoutMs = 10_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const found = frames.find(predicate);
+    if (found !== undefined) return found;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 /**
  * Records every frame the server sends to `tunnel`, alongside the client's own
  * handling of them (a second `message` listener on the same socket).
@@ -250,7 +264,7 @@ afterEach(async () => {
 
 /** Throws away the app the harness built and starts one with `options`. */
 async function restartApp(options: { heartbeatIntervalMs?: number; requestTimeoutMs?: number }): Promise<void> {
-  client?.stop();
+  for (const tunnel of tunnels.splice(0)) tunnel.stop();
   client = undefined;
   await stopApp();
   await startApp(options);
