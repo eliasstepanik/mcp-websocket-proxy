@@ -129,7 +129,7 @@ $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
 # Hidden: no console window. RestartCount/RestartInterval: the crash policy.
 # ExecutionTimeLimit 0: never let Task Scheduler kill a healthy agent.
-# MultipleInstancesPolicy Ignore: "do not start a new instance if one is running".
+# MultipleInstances IgnoreNewTask: "do not start a new instance if one is running".
 $Settings = New-ScheduledTaskSettingsSet `
     -Hidden `
     -AllowStartIfOnBatteries `
@@ -137,8 +137,9 @@ $Settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeSpanNone `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
-    -MultipleInstances Ignore
+    -MultipleInstances IgnoreNewTask
 
 if ($LogonType -eq 'Password') {
     if (-not $Credential) {
