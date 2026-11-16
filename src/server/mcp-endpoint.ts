@@ -83,26 +83,30 @@ export async function createEndpointSession(upstream: Upstream, options: McpEndp
     const params = stripProgressToken(request.params);
     const warrenToken = readProgressToken(request.params);
 
-    return upstream.request(request.method, params, {
-      ...(extra.signal ? { signal: extra.signal } : {}),
-      ...(warrenToken !== undefined
-        ? {
-            onProgress: (progress: UpstreamProgress) => {
-              void server
-                .notification(
-                  {
-                    method: 'notifications/progress',
-                    params: { progressToken: warrenToken, ...progress },
-                  },
-                  { relatedRequestId: extra.requestId },
-                )
-                .catch(() => {
-                  /* Warren's stream is gone; progress is best-effort. */
-                });
-            },
-          }
-        : {}),
-    }) as Promise<Result>;
+    try {
+      return await upstream.request(request.method, params, {
+        ...(extra.signal ? { signal: extra.signal } : {}),
+        ...(warrenToken !== undefined
+          ? {
+              onProgress: (progress: UpstreamProgress) => {
+                void server
+                  .notification(
+                    {
+                      method: 'notifications/progress',
+                      params: { progressToken: warrenToken, ...progress },
+                    },
+                    { relatedRequestId: extra.requestId },
+                  )
+                  .catch(() => {
+                    /* Warren's stream is gone; progress is best-effort. */
+                  });
+              },
+            }
+          : {}),
+      }) as Promise<Result>;
+    } catch (error) {
+      throw toWireError(error);
+    }
   };
 
   server.fallbackNotificationHandler = async (notification) => {
