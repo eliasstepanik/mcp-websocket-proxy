@@ -89,9 +89,10 @@ async function connectWarren(): Promise<{ client: Client; notifications: { metho
   return { client, notifications };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 10_000, label = 'condition'): Promise<void> {
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 10_000, label = 'condition'): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  for (;;) {
+    if (await predicate()) return;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
