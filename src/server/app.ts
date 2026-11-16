@@ -283,7 +283,17 @@ export function createApp(options: AppOptions): App {
         sendUnauthorized(res);
         return;
       }
-      const name = decodeURIComponent(match[1] ?? '');
+      // A malformed percent escape (`/mcp/%E0`) makes `decodeURIComponent` throw a
+      // `URIError` inside the synchronous request listener: answer with the same 404
+      // an invalid name gets instead of letting the exception escape.
+      const raw = match[1] ?? '';
+      let name: string;
+      try {
+        name = decodeURIComponent(raw);
+      } catch {
+        sendJsonRpc(res, 404, `Not Found: invalid server name ${JSON.stringify(raw)}`);
+        return;
+      }
       if (!SERVER_NAME_PATTERN.test(name)) {
         sendJsonRpc(res, 404, `Not Found: invalid server name ${JSON.stringify(name)}`);
         return;
