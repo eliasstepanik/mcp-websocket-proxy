@@ -423,19 +423,23 @@ describe('sendRequest', () => {
 
     const controller = new AbortController();
     const pending = sendRequest('alpha', { method: 'tools/call', signal: controller.signal });
+    // Attach the rejection handler immediately: the abort below rejects before the
+    // `cancel` frame comes back, and vitest flags a late-handled rejection.
+    const settled = pending.catch((error: unknown) => error);
     const frame = await client.expect('request');
     controller.abort();
 
     const cancel = await client.expect('cancel');
     expect(cancel.id).toBe(frame.id);
-    const error = await pending.catch((e: unknown) => e);
+    const error = await settled;
     expect(error).toBeInstanceOf(Error);
     expect(isProxyError(error)).toBe(false);
     expect((error as Error).message).toMatch(/abort/i);
 
     // A response arriving after the abort is ignored (nothing is in flight).
     client.send({ type: 'response', id: frame.id, result: { late: true } });
-    await expect(pending).rejects.toBeInstanceOf(Error);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(client.ws.readyState).toBe(WebSocket.OPEN);
   });
 
   it('sends cancel and rejects with a timeout proxyError past the deadline', async () => {
@@ -444,11 +448,12 @@ describe('sendRequest', () => {
     await client.expect('server_ack');
 
     const pending = sendRequest('alpha', { method: 'tools/call', timeoutMs: 80 });
+    const settled = pending.catch((error: unknown) => error);
     const frame = await client.expect('request');
     const cancel = await client.expect('cancel');
     expect(cancel.id).toBe(frame.id);
 
-    const error = await pending.catch((e: unknown) => e);
+    const error = await settled;
     expect(isProxyError(error)).toBe(true);
     expect((error as { code: number }).code).toBe(PROXY_ERROR_CODE);
     expect((error as { data: { reason: string } }).data.reason).toBe('timeout');
@@ -460,10 +465,11 @@ describe('sendRequest', () => {
     await client.expect('server_ack');
 
     const pending = sendRequest('alpha', { method: 'tools/call' });
+    const settled = pending.catch((error: unknown) => error);
     await client.expect('request');
     client.terminate();
 
-    const error = await pending.catch((e: unknown) => e);
+    const error = await settled;
     expect(isProxyError(error)).toBe(true);
     expect((error as { code: number }).code).toBe(PROXY_ERROR_CODE);
     expect((error as { data: { source: string; reason: string } }).data).toMatchObject({
@@ -471,8 +477,7 @@ describe('sendRequest', () => {
       reason: 'client_disconnected',
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(registry.connectionCount).toBe(0);
+    await waitFor(() => registry.connectionCount === 0, 'the connection to be unregistered');
     expect(registry.lookup('alpha')).toBeUndefined();
     expect(registry.listServers()).toEqual([]);
     void REASON_CONNECTION_LOST;
