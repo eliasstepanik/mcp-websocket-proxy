@@ -123,35 +123,32 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   }
 
   let closing: Promise<void> | undefined;
-  const close = (): Promise<void> => {
-    if (!closing) {
-      process.off('SIGINT', onSignal);
-      process.off('SIGTERM', onSignal);
-      closing = app.close();
-    }
-    return closing;
-  };
-  const onSignal = (signal: NodeJS.Signals): void => {
-    process.stderr.write(`${JSON.stringify({ level: 'info', message: 'signal', signal })}\n`);
-    void close()
-      .then(() => process.exit(0))
-      .catch(() => process.exit(1));
-  };
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
-
-  // The agent has no natural end: it runs until a signal. `close()` is exported
-  // through the returned promise so an embedder (or a test) can stop it too.
-  await new Promise<void>((resolve) => {
-    const stop = (): void => {
-      void close().finally(() => resolve());
+  const closed = new Promise<void>((resolve) => {
+    const close = (): Promise<void> => {
+      if (!closing) {
+        process.off('SIGINT', onSignal);
+        process.off('SIGTERM', onSignal);
+        closing = app.close();
+      }
+      return closing;
     };
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
+    // The agent has no natural end: it runs until a signal, then shuts the tunnel
+    // and the children down and exits 0 so a supervisor sees a clean stop.
+    const onSignal = (signal: NodeJS.Signals): void => {
+      process.stderr.write(`${JSON.stringify({ level: 'info', message: 'signal', signal })}\n`);
+      void close()
+        .then(() => resolve())
+        .catch(() => {
+          process.stderr.write('fatal: shutdown failed\n');
+          process.exitCode = 1;
+          resolve();
+        });
+    };
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
   });
-  process.off('SIGINT', onSignal);
-  process.off('SIGTERM', onSignal);
-  return 0;
+  await closed;
+  return process.exitCode === 1 ? 1 : 0;
 }
 
 /** True when this module is the one Node was asked to run. */
