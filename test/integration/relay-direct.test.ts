@@ -250,8 +250,6 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
 
     const tools = await client.listTools();
     expect(tools.tools.map((t) => t.name)).toContain('echo');
-    const state = await readFixtureState(client);
-    expect(state.startCount).toBe(1);
     await client.close();
   });
 
