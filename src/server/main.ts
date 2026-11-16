@@ -120,7 +120,12 @@ export async function start(env: NodeJS.ProcessEnv = process.env): Promise<Runni
 function isMain(metaUrl: string): boolean {
   const entry = process.argv[1];
   if (entry === undefined) return false;
-  return metaUrl === new URL(`file://${fileURLToPath(entry)}`).href;
+  try {
+    return metaUrl === pathToFileURL(entry).href;
+  } catch {
+    // A worker harness may hand us something that is not a filesystem path at all.
+    return false;
+  }
 }
 
 if (isMain(import.meta.url)) {
