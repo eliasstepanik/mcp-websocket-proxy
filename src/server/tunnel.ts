@@ -238,7 +238,7 @@ export class TunnelHandler {
   /** Close the tunnel and fail everything in flight. */
   close(code = 1000, reason = ''): void {
     try {
-      this.ws.close(code, reason);
+      this.ws.close(code, safeReason(reason));
     } catch {
       /* already gone */
     }
