@@ -74,7 +74,7 @@ export function isUpstreamRpcError(error: unknown): boolean {
 /** Resolves the tunnel that currently serves `name`, if any. */
 export type TunnelResolver = (name: string) => TunnelUpstreamTransport | undefined;
 
-/** The part of {@link Registry} a {@link TunnelUpstream} reads; a plain object satisfies it. */
+/** The part of `Registry` a {@link TunnelUpstream} reads; a plain object satisfies it. */
 export interface UpstreamRegistry {
   lookup(name: string): LookupResult | undefined;
 }
