@@ -463,11 +463,11 @@ export class TunnelClient {
   }
 
   /** Dispatch one inbound request to its local server and answer with a `response`. */
-  private async onRequest(msg: Request): Promise<void> {
+  private async onRequest(msg: Request, ws: WebSocket): Promise<void> {
     const key = String(msg.id);
     const server = this.servers.get(msg.server);
     if (!server) {
-      this.send({
+      this.sendOn(ws, {
         type: 'response',
         id: msg.id,
         error: { code: JSONRPC_METHOD_NOT_FOUND, message: `unknown server ${JSON.stringify(msg.server)}` },
@@ -476,7 +476,7 @@ export class TunnelClient {
     }
 
     const controller = new AbortController();
-    this.inFlight.set(key, { controller });
+    this.inFlight.set(key, { controller, ws });
 
     try {
       const result = await server.request(msg.method, msg.params, {
@@ -484,16 +484,17 @@ export class TunnelClient {
         ...(msg.wantProgress
           ? {
               onProgress: (progress: { progress: number; total?: number; message?: string }) => {
-                this.send({ type: 'progress', id: msg.id, params: { ...progress } });
+                this.sendOn(ws, { type: 'progress', id: msg.id, params: { ...progress } });
               },
             }
           : {}),
       });
-      this.send({ type: 'response', id: msg.id, result });
+      this.sendOn(ws, { type: 'response', id: msg.id, result });
     } catch (error) {
-      this.send({ type: 'response', id: msg.id, error: toWireError(error) });
+      this.sendOn(ws, { type: 'response', id: msg.id, error: toWireError(error) });
     } finally {
-      this.inFlight.delete(key);
+      // Only forget *this* request: a newer connection may already own the same id.
+      if (this.inFlight.get(key)?.ws === ws) this.inFlight.delete(key);
     }
   }
 }
