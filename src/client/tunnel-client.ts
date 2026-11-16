@@ -47,7 +47,7 @@ import type { LocalMcpServer } from './local-server.js';
 /** Close code: this connection was replaced by a newer one with the same clientId. */
 const CLOSE_CODE_REPLACED = 4002;
 
-  /** Close code: the server rejected the credentials (auth failure). */
+    /** Close code: the server rejected the credentials (auth failure). */
 const CLOSE_CODE_UNAUTHORIZED = 4003;
 
 /** How long to wait after a 4002/4003 close (or a 401 upgrade response) before dialing again. */
