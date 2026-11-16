@@ -71,7 +71,7 @@ which is where the `Dockerfile` is. Everything below runs from
 ### 2. Tokens
 
 ```bash
-cd /home/proxy/services/stacks/McpWebsocketProxy/deploy
+cd /home/proxy/services/stacks/McpWebsocketProxy/src/deploy
 cp .env.example .env
 chmod 600 .env
 openssl rand -hex 32   # -> MCP_PROXY_CLIENT_TOKEN
