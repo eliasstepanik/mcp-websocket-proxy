@@ -407,5 +407,12 @@ export class LocalMcpServer implements Upstream {
   private setState(state: LocalServerState, detail?: string): void {
     this.state = state;
     this.options.onStateChange?.(state, detail);
+    for (const listener of this.stateListeners) {
+      try {
+        listener(state, detail);
+      } catch {
+        /* one bad listener must never break the child supervisor */
+      }
+    }
   }
 }
