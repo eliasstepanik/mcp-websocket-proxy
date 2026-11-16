@@ -34,6 +34,8 @@
 
 import WebSocket from 'ws';
 
+import type { ClientRequest, IncomingMessage } from 'node:http';
+
 import {
   parseTunnelMessage,
   PROTOCOL_VERSION,
