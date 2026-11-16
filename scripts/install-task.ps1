@@ -128,8 +128,9 @@ $UserId = "$env:USERDOMAIN\$env:USERNAME"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
 # Hidden: no console window. RestartCount/RestartInterval: the crash policy.
-# ExecutionTimeLimit 0: never let Task Scheduler kill a healthy agent.
-# MultipleInstances IgnoreNewTask: "do not start a new instance if one is running".
+# ExecutionTimeLimit 0 (PT0S): no limit, so Task Scheduler never kills a healthy
+# agent. MultipleInstances IgnoreNewTask: "do not start a new instance if one is
+# already running".
 $Settings = New-ScheduledTaskSettingsSet `
     -Hidden `
     -AllowStartIfOnBatteries `
@@ -137,7 +138,6 @@ $Settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeSpanNone `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
     -MultipleInstances IgnoreNewTask
 
