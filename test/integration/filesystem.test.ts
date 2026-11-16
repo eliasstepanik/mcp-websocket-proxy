@@ -92,6 +92,19 @@ function configYaml(options: { filesystem: string; logFile?: string }): string {
   ].join('\n');
 }
 
+/** `/status` as the endpoint sees it. */
+async function fetchStatus(): Promise<{ clients: { clientId: string; servers: { name: string; up: boolean }[] }[] }> {
+  const response = await fetch(`${baseUrl}/status`, { headers: { authorization: bearerHeader(ENDPOINT_TOKEN) } });
+  if (!response.ok) throw new Error(`/status answered ${response.status}`);
+  return (await response.json()) as { clients: { clientId: string; servers: { name: string; up: boolean }[] }[] };
+}
+
+/** True when `/status` reports `name` as up. */
+async function isUp(name: string): Promise<boolean> {
+  const status = await fetchStatus();
+  return status.clients.some((client) => client.servers.some((server) => server.name === name && server.up));
+}
+
 /** Starts an agent with `filesystemBlock` as its `filesystem:` section. */
 async function startAgent(filesystemBlock: string, options: { logFile?: string } = {}): Promise<ClientApp> {
   const path = writeConfig(configYaml({ filesystem: filesystemBlock, ...options }));
