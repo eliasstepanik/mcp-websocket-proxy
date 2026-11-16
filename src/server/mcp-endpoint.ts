@@ -350,9 +350,12 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
     handle,
     sessionCount: () => sessions.size,
     notifyAll: (method, params) => {
+      // Same normalisation as the upstream-notification path: `params` is optional,
+      // never null.
+      const normalised = (params ?? undefined) as Record<string, unknown> | undefined;
       for (const entry of sessions.values()) {
         void entry.session.server
-          .notification({ method, ...(params !== undefined ? { params } : {}) })
+          .notification({ method, ...(normalised !== undefined ? { params: normalised } : {}) })
           .catch(() => {
             /* No live SSE stream for this session right now: notification dropped. */
           });
