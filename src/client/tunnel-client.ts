@@ -94,6 +94,13 @@ export interface TunnelClientOptions {
 /** One request the local server is currently running for the tunnel. */
 interface InFlight {
   controller: AbortController;
+  /**
+   * The socket the `request` arrived on. The answer may only go back out on *that*
+   * socket: if it is no longer the current one the answer is dropped, because the
+   * server side has already failed the request and its id may since have been
+   * reused for a different one.
+   */
+  ws: WebSocket;
 }
 
 function toText(data: unknown): string {
