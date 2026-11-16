@@ -666,3 +666,79 @@ describe('disconnect (h): a late answer must not cross connections', () => {
     await alpha.client.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// (i) the tunnel itself drops, then dials again: same Warren session id
+// ---------------------------------------------------------------------------
+
+describe('disconnect (i): a real tunnel drop, then a reconnect on the same session id', () => {
+  it('fails with -32050 while the tunnel is down, then serves the kept session id and synthesises list_changed on down->up', async () => {
+    const alpha = await connectServer('alpha');
+    const sessionId = alpha.transport.sessionId!;
+    expect(sessionId).toBeTruthy();
+
+    let listChanged = 0;
+    alpha.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      listChanged += 1;
+    });
+    // Establish the standalone GET stream the notification needs (same as case (c)).
+    await alpha.client.listTools();
+    expect(listChanged).toBe(0);
+
+    // Hard-kill the tunnel socket: the children keep running, but the connection
+    // that carries them is gone (this is a dropped cable, not a stopped server).
+    socketOf(client!).terminate();
+
+    // Down: the registry forgets the names, so `initialize` is a retryable 503 and a
+    // call on the kept session id is a proxy error, never a hang.
+    await waitFor(() => app?.registry.lookup('alpha') === undefined, 'alpha to leave the registry', 10_000);
+
+    const offline = await rawInitialize('alpha');
+    expect(offline.status).toBe(503);
+    expect(offline.headers.get('retry-after')).toBe('10');
+    const offlineBody = (await offline.json()) as { error: { code: number; data?: { source?: string; reason?: string } } };
+    expect(offlineBody.error.code).toBe(PROXY_ERROR_CODE);
+    expect(offlineBody.error.data).toEqual({ source: PROXY_ERROR_SOURCE, reason: 'offline' });
+
+    const startedAt = Date.now();
+    const whileDown = await errorOf(alpha.client.callTool({ name: 'echo', arguments: { text: 'during the outage' } }));
+    expect(whileDown).toBeInstanceOf(McpError);
+    expect(whileDown.code).toBe(PROXY_ERROR_CODE);
+    // Whichever half of the failure the proxy is in when the request is resolved —
+    // the name is gone (`offline`) or the tunnel died under the request
+    // (`client_disconnected`) — it is a proxy error, and it is prompt.
+    expect((whileDown.data as { source?: string; reason?: string })).toMatchObject({ source: PROXY_ERROR_SOURCE });
+    expect(['offline', 'server_down', 'client_disconnected']).toContain((whileDown.data as { reason?: string }).reason);
+    expect(Date.now() - startedAt).toBeLessThan(HEARTBEAT_MS * 2 + 1_000);
+
+    // Nothing has been synthesised yet: the name has not come back.
+    expect(listChanged).toBe(0);
+
+    // Up again: `TunnelClient` reconnects by itself (1s backoff) and re-advertises.
+    await waitFor(() => app?.registry.lookup('alpha')?.up === true, 'the client to reconnect and re-advertise', 20_000);
+    expect(client?.state).toBe('connected');
+
+    // The proxy synthesises the notification the upstream could not send while it was
+    // unreachable, on the session that survived the outage.
+    await waitFor(() => listChanged > 0, 'a synthetic notifications/tools/list_changed', 10_000);
+    expect(alpha.notifications).toContain('notifications/tools/list_changed');
+
+    // The same Warren session id serves again, with no re-initialize.
+    expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'back' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:back' }],
+    });
+    expect(alpha.transport.sessionId).toBe(sessionId);
+
+    // A raw request on the kept session id goes over the *new* tunnel.
+    const echo = await rawPost('alpha', sessionId, {
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'echo', arguments: { text: 'raw after reconnect' } },
+    });
+    expect(echo.status).toBe(200);
+    expect(await echo.text()).toContain('echo:raw after reconnect');
+
+    await alpha.client.close();
+  });
+});
