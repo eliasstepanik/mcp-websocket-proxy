@@ -76,6 +76,7 @@ export async function start(env: NodeJS.ProcessEnv = process.env): Promise<Runni
     clientToken: config.clientToken,
     endpointToken: config.endpointToken,
     heartbeatIntervalMs: config.heartbeatIntervalMs,
+    heartbeatTimeoutMs: config.heartbeatTimeoutMs,
     requestTimeoutMs: config.requestTimeoutMs,
     maxBodyBytes: config.maxMessageBytes,
     sessionIdleTtlMs: config.sessionIdleTtlMs,
