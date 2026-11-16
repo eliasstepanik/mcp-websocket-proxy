@@ -9,12 +9,12 @@
  * Warren session. The name-keyed handle is the seam that survives reconnects.
  *
  * Error contract (see `src/shared/errors.ts` and `src/server/mcp-endpoint.ts`):
- * - no registry entry at all -> {@link ProxyError} reason `offline`
- * - entry present but down   -> {@link ProxyError} reason `server_down`
+ * - no registry entry at all -> `ProxyError` reason `offline`
+ * - entry present but down   -> `ProxyError` reason `server_down`
  * Both are retryable reasons: the endpoint's `proxyReasonOf()` maps them to a
  * `503` + `retry-after` answer to `initialize`, so the reason must be carried on
- * the error exactly (which {@link proxyError} does).
- * - an {@link UpstreamRpcError} coming back from the client is rethrown **as the
+ * the error exactly (which `proxyError()` does).
+ * - an `UpstreamRpcError` coming back from the client is rethrown **as the
  *   same object**: the raw `{code, message, data}` triple must reach Warren
  *   without an added `MCP error <code>:` prefix.
  *
@@ -36,7 +36,7 @@ import type {
 /**
  * The tunnel operations a {@link TunnelUpstream} needs.
  *
- * {@link TunnelHandler} satisfies `sendRequest`/`subscribeNotifications` directly;
+ * `TunnelHandler` satisfies `sendRequest`/`subscribeNotifications` directly;
  * `sendNotification` is the one frame type the handler does not expose yet, so the
  * wiring layer (T2d) supplies it as a thin adapter over the socket. Keeping it in
  * this interface is what lets the upstream be unit-tested with a plain object.
@@ -82,7 +82,7 @@ export interface UpstreamRegistry {
 /**
  * One proxied server name, backed by live Registry + tunnel lookups.
  *
- * Never caches a tunnel: {@link Registry.lookup} runs per call, so a reconnect
+ * Never caches a tunnel: `Registry.lookup()` runs per call, so a reconnect
  * (new `TunnelHandler`, same `clientId`, same name) is picked up by the next
  * request without the endpoint noticing.
  */
@@ -125,9 +125,9 @@ export class TunnelUpstream implements Upstream {
    * Relay a JSON-RPC request over the current tunnel.
    *
    * Rejects with `offline`/`server_down` when nothing can serve it, with the
-   * tunnel's own `client_disconnected`/`timeout` {@link ProxyError} when the
+   * tunnel's own `client_disconnected`/`timeout` `ProxyError` when the
    * connection drops or the deadline passes, and with the upstream's
-   * {@link UpstreamRpcError} unchanged.
+   * `UpstreamRpcError` unchanged.
    */
   async request(method: string, params?: unknown, options?: UpstreamRequestOptions): Promise<unknown> {
     const tunnel = this.liveTunnel();
