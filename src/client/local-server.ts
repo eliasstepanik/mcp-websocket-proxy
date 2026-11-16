@@ -271,6 +271,13 @@ export class LocalMcpServer implements Upstream {
       if (this.client !== client) return;
       this.client = undefined;
       this.transport = undefined;
+      // A child that stayed up long enough counts as healthy: the next restart may
+      // start from the minimum backoff delay again. One that died young keeps the
+      // attempt counter climbing, so a crash-looping child reaches `maxRestarts`.
+      if (this.runningSince > 0 && Date.now() - this.runningSince >= (this.options.stableUptimeMs ?? DEFAULT_STABLE_UPTIME_MS)) {
+        this.restartAttempt = 0;
+      }
+      this.runningSince = 0;
       this.handleUnexpectedExit();
     };
     client.onerror = () => {
