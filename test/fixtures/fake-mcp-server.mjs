@@ -35,7 +35,7 @@ const state = {
   /** Last `notifications/cancelled` observed (as seen by the SDK's abort signal). */
   lastCancellation: null,
   /** How many times this process has been started (0 for the first instance). */
-  startCount: Number(process.env.FIXTURE_START_COUNT ?? '0'),
+  startCount: 0,
   /** Number of tool calls handled by this process instance. */
   calls: 0,
   /** Extra tools added through the `mutate` tool. */
