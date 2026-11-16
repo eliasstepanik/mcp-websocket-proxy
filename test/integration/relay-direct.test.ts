@@ -241,6 +241,9 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
     const crashed = await client.callTool({ name: 'crash', arguments: {} });
     expect(crashed.content).toEqual([{ type: 'text', text: 'crash:bye' }]);
 
+    // The child exits ~25ms after answering `crash`, so the state may still read
+    // 'running' here: wait for the crash to be observed before asserting on it.
+    await waitFor(() => stateChanges.includes('backoff'), 10_000, 'backoff state');
     await waitFor(() => local!.currentState === 'running', 10_000, 'child restart');
     expect(stateChanges).toContain('backoff');
     expect(readFileSync(startLogFile, 'utf8').trim().split('\n').length).toBeGreaterThanOrEqual(2);
