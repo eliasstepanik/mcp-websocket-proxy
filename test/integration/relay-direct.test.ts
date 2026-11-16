@@ -262,9 +262,9 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
   it('fails in-flight requests with a proxy error when the child dies', async () => {
     const { client } = await connectWarren();
     const pending = client.callTool({ name: 'slow', arguments: { ms: 5_000 } }).catch((e: unknown) => e as McpError);
-    await waitFor(() => local.currentState === 'running');
+    await waitFor(() => local!.currentState === 'running');
     await new Promise((resolve) => setTimeout(resolve, 150));
-    await local.stop();
+    await local!.stop();
 
     const error = (await pending) as McpError;
     expect(error).toBeInstanceOf(McpError);
