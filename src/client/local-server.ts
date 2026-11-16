@@ -383,11 +383,9 @@ export class LocalMcpServer implements Upstream {
   }
 
   private emitStderrLine(sink: StderrSink, line: string): void {
-    // The pid comes from this spawn's own transport: `this.transport` may already
-    // point at a newer child (startup lines) or at nothing (late lines from a dead
-    // child). The line is always prefixed, so a child that writes its own
-    // `[name:pid=...]` header cannot masquerade as another server.
-    const prefixed = `[${this.name}:pid=${sink.transport.pid ?? '?'}] ${line}`;
+    // Always prefixed, so a child that writes its own `[name:pid=...]` header cannot
+    // masquerade as another server.
+    const prefixed = `[${this.name}:pid=${sink.pid ?? sink.transport.pid ?? '?'}] ${line}`;
     if (this.options.onStderrLine) this.options.onStderrLine(prefixed);
     else process.stderr.write(`${prefixed}\n`);
   }
