@@ -341,7 +341,9 @@ function parseServersSection(root: Record<string, unknown>, errors: string[]): M
       continue;
     }
     const name = normalizeServerName(key);
-    if (!SERVER_NAME_RE.test(name)) {
+    // The raw key is checked: `Files` is not a legal name even though it would
+    // normalise to one, and saying so is clearer than silently renaming it.
+    if (!SERVER_NAME_RE.test(key)) {
       errors.push(
         `invalid server name ${JSON.stringify(key)}: must match ${SERVER_NAME_RE} ` +
           '(lowercase letters, digits, "_" and "-", at most 63 characters)',
