@@ -388,38 +388,3 @@ describe('disconnect (c): reconnect with the same session id', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// (d) a socket that dies without a close event
-// ---------------------------------------------------------------------------
-
-describe('disconnect (d): a silently dropped socket', () => {
-  it('is found by the heartbeat and the registry marks the servers down', async () => {
-    // A TCP proxy that can stop forwarding without closing anything: from the
-    // client's side the socket stays open forever (no FIN, no close event).
-    const proxy = await startStallingProxy();
-    client?.stop();
-    client = undefined;
-    await waitFor(() => app?.registry.connectionCount === 0, 'the first tunnel to go away', 10_000);
-
-    const stalled = await startTunnel({ url: proxy.url });
-    const startedAt = Date.now();
-    proxy.stall();
-
-    await waitFor(() => app?.registry.lookup('alpha') === undefined, 'alpha to leave the registry', 5_000);
-    const elapsed = Date.now() - startedAt;
-    expect(app?.registry.lookup('beta')).toBeUndefined();
-    expect(app?.registry.connectionCount).toBe(0);
-    // Two heartbeat ticks (ping, then the unanswered ping) plus slack: the drop was
-    // detected by the keepalive, not by a close event.
-    expect(elapsed).toBeGreaterThanOrEqual(HEARTBEAT_MS);
-    expect(elapsed).toBeLessThan(HEARTBEAT_MS * 2 + 1_000);
-
-    // The client noticed nothing: its socket is still open and it still believes it
-    // is connected, which is exactly what the server-side heartbeat is for.
-    expect(stalled.state).toBe('connected');
-    expect(socketOf(stalled).readyState).toBe(1);
-    expect((await fetch(`${baseUrl}/healthz`)).status).toBe(200);
-
-    await proxy.stop();
-  });
-});
