@@ -169,7 +169,7 @@ beforeAll(async () => {
   });
   wss = new WebSocketServer({ noServer: true });
   httpServer.on('upgrade', (req, socket, head) => {
-    wss.handleUpgrade(req, socket as never, head, (ws) => {
+    wss.handleUpgrade(req, socket as never, head, (ws: WebSocket) => {
       handlers.push(new TunnelHandler(ws, registry, { serverVersion: 'test-1.2.3', ...handlerOverrides }));
     });
   });
