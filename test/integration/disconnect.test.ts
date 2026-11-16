@@ -15,6 +15,8 @@
  * `clientId`, (g) a request deadline that reaches Warren *and* the client.
  */
 
+import { connect, createServer as createNetServer, type Socket } from 'node:net';
+
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -94,10 +96,10 @@ async function makeLocals(): Promise<Map<string, LocalMcpServer>> {
 }
 
 /** Starts the tunnel client over `locals` and waits for both names to be up. */
-async function startTunnel(options: { clientId?: string; servers?: Map<string, LocalMcpServer> } = {}): Promise<TunnelClient> {
+async function startTunnel(options: { clientId?: string; servers?: Map<string, LocalMcpServer>; url?: string } = {}): Promise<TunnelClient> {
   locals = options.servers ?? locals ?? (await makeLocals());
   const tunnel = new TunnelClient({
-    url: tunnelUrl,
+    url: options.url ?? tunnelUrl,
     token: CLIENT_TOKEN,
     clientId: options.clientId ?? CLIENT_ID,
     servers: locals,
@@ -183,6 +185,55 @@ async function readFixtureState(warren: Client): Promise<Record<string, unknown>
 /** Pulls the JSON-RPC error out of a failed SDK call. */
 async function errorOf(promise: Promise<unknown>): Promise<McpError> {
   return (await promise.then(() => undefined).catch((e: unknown) => e)) as McpError;
+}
+
+/**
+ * Records every frame the server sends to `tunnel`, alongside the client's own
+ * handling of them (a second `message` listener on the same socket).
+ */
+function sniffFrames(tunnel: TunnelClient): string[] {
+  const frames: string[] = [];
+  const ws = socketOf(tunnel) as unknown as { on(event: 'message', cb: (data: unknown) => void): void };
+  ws.on('message', (data: unknown) => {
+    frames.push(typeof data === 'string' ? data : Buffer.from(data as Uint8Array).toString('utf8'));
+  });
+  return frames;
+}
+
+/**
+ * A TCP proxy in front of `/tunnel` that can stop forwarding **without closing
+ * anything**: neither side ever sees a FIN, so the client's socket stays open and
+ * silent forever. That is the "silently dropped socket" the heartbeat must catch.
+ */
+async function startStallingProxy(): Promise<{ url: string; stall(): void; stop(): Promise<void> }> {
+  const upstreamPort = Number(new URL(tunnelUrl).port);
+  const open = new Set<Socket>();
+  const server = createNetServer((clientSocket) => {
+    const upstream = connect({ host: '127.0.0.1', port: upstreamPort });
+    open.add(clientSocket);
+    open.add(upstream);
+    clientSocket.pipe(upstream);
+    upstream.pipe(clientSocket);
+    clientSocket.on('error', () => undefined);
+    upstream.on('error', () => undefined);
+    clientSocket.on('close', () => upstream.destroy());
+    upstream.on('close', () => clientSocket.destroy());
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('failed to bind the stalling proxy');
+  return {
+    url: `ws://127.0.0.1:${address.port}/tunnel`,
+    // `pause()` stops forwarding the bytes that arrive; the sockets stay open.
+    stall: () => {
+      for (const socket of open) socket.pause();
+    },
+    stop: async () => {
+      for (const socket of open) socket.destroy();
+      open.clear();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }
 
 // One app + one tunnel per test: a case that needs different heartbeat/request
