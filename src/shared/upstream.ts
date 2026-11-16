@@ -57,6 +57,13 @@ export interface UpstreamRequestOptions {
   onProgress?: ((progress: UpstreamProgress) => void) | undefined;
   /** Per-request deadline in ms. Implementations should fail with `timeout`. */
   timeoutMs?: number | undefined;
+  /**
+   * The Warren session (`Mcp-Session-Id`) this request belongs to, when the caller
+   * has one. Purely for attribution/logging (e.g. the T2 tunnel tags tunnel frames so
+   * logs on the work PC can be traced back to a session); implementations must not
+   * base protocol behaviour on it.
+   */
+  sessionId?: string | undefined;
 }
 
 /** A notification that originated at the upstream server. */
