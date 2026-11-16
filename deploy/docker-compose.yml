@@ -1,15 +1,17 @@
 # Warren-side proxy, deployed as a Docker Compose stack.
 #
-# Expected layout on the host (the stack is checked out under a `src/` tree, so
-# `build: ..` points at the repository root):
+# Expected layout on the host — the repository is checked out under `src/`, so
+# this file is `<stack>/src/deploy/docker-compose.yml` and `build: ..` below
+# resolves to the repository root:
 #
 #   /home/proxy/services/stacks/McpWebsocketProxy/
-#   ├── deploy/
-#   │   ├── docker-compose.yml   <- this file
-#   │   └── .env                 <- chmod 600, never committed
-#   └── src, package.json, ...   <- the repository
+#   └── src/                    <- the repository (git clone)
+#       ├── Dockerfile
+#       └── deploy/
+#           ├── docker-compose.yml   <- this file
+#           └── .env                 <- chmod 600, never committed
 #
-# Start it from this directory:
+# Start it from `src/deploy/`:
 #
 #   docker compose --env-file .env up -d --build
 #
