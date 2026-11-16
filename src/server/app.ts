@@ -35,6 +35,13 @@ import { TunnelUpstreams, type TunnelUpstreamTransport } from './tunnel-upstream
 import { TunnelHandler } from './tunnel.js';
 
 export interface AppOptions {
+  /**
+   * Bearer token that a tunnel client must present on `upgrade /tunnel`. Required:
+   * an unauthenticated tunnel would hand anyone the servers behind it.
+   */
+  clientToken: string;
+  /** Bearer token that Warren must present on `/mcp/<name>` and `/status`. */
+  endpointToken: string;
   /** Registry to use. Default: a fresh one. */
   registry?: Registry<WsLike>;
   /** Upstream manager to use. Default: a fresh one over `registry`. */
@@ -53,12 +60,34 @@ export interface AppOptions {
   sessionIdleTtlMs?: number;
   /** Reported as `welcome.serverVersion`. */
   serverVersion?: string;
+  /**
+   * Called once per finished HTTP request with the fields safe to log: method,
+   * path, status and duration. Never params, results or tokens. `main.ts` turns
+   * these into one JSON line each.
+   */
+  onRequest?: (entry: RequestLogEntry) => void;
+}
+
+/** What the app reports per request (see {@link AppOptions.onRequest}). */
+export interface RequestLogEntry {
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+}
+
+/** One row of `/status`: a connected client and the servers it owns. */
+export interface ClientStatus {
+  clientId: string;
+  servers: { name: string; up: boolean }[];
 }
 
 export interface App {
   readonly httpServer: HttpServer;
   readonly registry: Registry<WsLike>;
   readonly upstreams: TunnelUpstreams;
+  /** The `/status` payload: connected clients with their server names and state. */
+  status(): { clients: ClientStatus[]; serverVersion: string };
   close(): Promise<void>;
 }
 
