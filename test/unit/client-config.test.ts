@@ -189,8 +189,9 @@ describe('${env:VAR} expansion', () => {
     expect(message).not.toContain(TOKEN);
   });
 
-  it('treats an empty variable as set (only absence is an error)', () => {
-    expect(load(minimal(), { MCP_PROXY_CLIENT_TOKEN: '' }).server.token).toBe('');
+  it('rejects a blank token like a missing one', () => {
+    const check = checkConfigText(minimal(), { MCP_PROXY_CLIENT_TOKEN: '   ' });
+    expect(check.errors).toContain('server.token must not be empty');
   });
 });
 
