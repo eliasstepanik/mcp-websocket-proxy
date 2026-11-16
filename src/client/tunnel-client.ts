@@ -167,6 +167,8 @@ export class TunnelClient {
   private stopped = false;
   /** Number of consecutive failed reconnect attempts; drives the backoff. */
   private attempt = 0;
+  /** True when the last dial was answered with HTTP 401: the next retry uses the long auth delay. */
+  private authRejected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** `welcome.heartbeatIntervalMs`: how often the server pings, per the server's own report. */
   private heartbeatIntervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS;
