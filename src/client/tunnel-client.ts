@@ -364,7 +364,7 @@ export class TunnelClient {
 
   // ------------------------------------------------------------------ framing
 
-  private onMessage(data: unknown): void {
+  private onMessage(data: unknown, ws: WebSocket): void {
     let msg: ServerToClient;
     try {
       msg = parseTunnelMessage(toText(data), 'out') as ServerToClient;
@@ -388,11 +388,15 @@ export class TunnelClient {
         this.advertiseAll();
         return;
       case 'request':
-        void this.onRequest(msg);
+        void this.onRequest(msg, ws);
         return;
-      case 'cancel':
-        this.inFlight.get(String(msg.id))?.controller.abort(msg.reason ?? 'cancelled by the server');
+      case 'cancel': {
+        // Only a cancel arriving on the socket that owns the request may abort it.
+        const inflight = this.inFlight.get(String(msg.id));
+        if (!inflight || inflight.ws !== ws) return;
+        inflight.controller.abort(msg.reason ?? 'cancelled by the server');
         return;
+      }
       case 'server_ack':
         // The server is authoritative about ownership; a rejected `server_up` is
         // simply not retried until the next `welcome` or state change.
