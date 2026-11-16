@@ -443,7 +443,7 @@ describe('disconnect (f): a name conflict from another clientId', () => {
     expect(JSON.parse(ackFrame)).toEqual({ type: 'server_ack', server: 'alpha', ok: false, error: 'name_conflict' });
 
     // Ownership stayed with the first client, and it still serves.
-    expect(app?.registry.lookup('alpha')?.clientId).toBe(CLIENT_ID);
+    expect(app?.registry.lookup('alpha')?.connection.clientId).toBe(CLIENT_ID);
     expect(app?.registry.lookup('alpha')?.up).toBe(true);
     expect(app?.registry.get('disc-thief')?.servers.size ?? 0).toBe(0);
 
