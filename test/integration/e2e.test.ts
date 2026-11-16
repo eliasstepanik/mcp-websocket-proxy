@@ -108,7 +108,11 @@ async function connectServer(
 async function rawInitialize(name: string): Promise<Response> {
   return await fetch(`${baseUrl}/mcp/${name}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      authorization: bearerHeader(ENDPOINT_TOKEN),
+    },
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
