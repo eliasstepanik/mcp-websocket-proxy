@@ -185,6 +185,12 @@ export interface McpEndpointHandlerOptions {
   upstream: Upstream | (() => Upstream);
   /** Observes session creation (T2 uses this to bind tunnel state). */
   onSession?: (session: McpEndpointSession) => void;
+  /**
+   * Idle TTL in ms: a session that has not served a request for this long is closed
+   * and forgotten, so its id answers 404 like any unknown session.
+   * Default one week; inject a short value in tests.
+   */
+  sessionIdleTtlMs?: number;
 }
 
 export interface McpEndpointHandler {
@@ -195,34 +201,110 @@ export interface McpEndpointHandler {
   close(): Promise<void>;
 }
 
+/** A live session plus the bookkeeping the idle reaper needs. */
+interface SessionEntry {
+  session: McpEndpointSession;
+  /** `Date.now()` of the last request this session served. */
+  lastSeen: number;
+}
+
 /**
  * Builds the request handler for one `/mcp/<name>` route. Warren sessions are keyed
  * by the `Mcp-Session-Id` the transport generates during `initialize`.
  */
 export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): McpEndpointHandler {
   assertValidServerName(options.name);
-  const sessions = new Map<string, McpEndpointSession>();
+  const sessions = new Map<string, SessionEntry>();
   const resolveUpstream = typeof options.upstream === 'function' ? (options.upstream as () => Upstream) : () => options.upstream as Upstream;
+  const idleTtlMs = options.sessionIdleTtlMs ?? DEFAULT_SESSION_IDLE_TTL_MS;
+
+  // Periodic reaper: forget (and close) sessions nobody has used for `idleTtlMs`.
+  // The interval is shortened for small TTLs so tests do not have to wait a minute.
+  const reap = (): void => {
+    const now = Date.now();
+    for (const [id, entry] of sessions) {
+      if (now - entry.lastSeen >= idleTtlMs) {
+        sessions.delete(id);
+        void entry.session.close().catch(() => undefined);
+      }
+    }
+  };
+  const reaper = setInterval(reap, Math.max(50, Math.min(60_000, idleTtlMs / 2)));
+  reaper.unref?.();
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const headerSessionId = firstHeader(req, 'mcp-session-id');
+    // A session built by *this* request: if it never gets a session id (rejected
+    // initialize, or a throw below) it is unreachable and must not leak.
+    let newSession: McpEndpointSession | undefined;
 
-    if (req.method === 'POST') {
-      let body: unknown;
-      try {
-        body = await readJsonBody(req);
-      } catch (error) {
-        sendJson(res, 400, jsonRpcError(null, -32700, (error as Error).message));
+    try {
+      if (req.method === 'POST') {
+        let body: unknown;
+        try {
+          body = await readJsonBody(req);
+        } catch (error) {
+          if (proxyReasonOf(error) === 'too_large') {
+            sendJson(res, 413, proxyJsonRpcError(null, 'too_large', (error as Error).message));
+            return;
+          }
+          sendJson(res, 400, jsonRpcError(null, -32700, (error as Error).message));
+          return;
+        }
+
+        let entry = headerSessionId ? sessions.get(headerSessionId) : undefined;
+        if (entry) entry.lastSeen = Date.now();
+        let session = entry?.session;
+
+        if (!session) {
+          if (!isInitializeRequest(body)) {
+            // A session id we do not know means the session is gone: 404 tells the client
+            // to re-initialize (spec). A *missing* header is simply a bad request.
+            if (headerSessionId) {
+              sendJson(res, 404, jsonRpcError(null, -32000, 'Not Found: unknown Mcp-Session-Id'));
+            } else {
+              sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: missing Mcp-Session-Id'));
+            }
+            return;
+          }
+          let upstream: Upstream;
+          try {
+            upstream = resolveUpstream();
+            void upstream.info; // fails fast with a proxy error when nothing is upstream
+          } catch (error) {
+            const reason = proxyReasonOf(error);
+            if (reason !== undefined && isRetryableOffline(reason)) {
+              sendJson(
+                res,
+                503,
+                proxyJsonRpcError(null, reason, (error as Error).message),
+                { 'retry-after': String(OFFLINE_RETRY_AFTER_SECONDS) },
+              );
+              return;
+            }
+            const code = typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : -32603;
+            sendJson(res, 500, jsonRpcError(null, code, (error as Error).message));
+            return;
+          }
+          const created = await createEndpointSession(upstream, {
+            onSessionInitialized: (sessionId) => sessions.set(sessionId, { session: created, lastSeen: Date.now() }),
+            onClosed: () => {
+              if (created.sessionId) sessions.delete(created.sessionId);
+            },
+          });
+          session = created;
+          newSession = created;
+          options.onSession?.(created);
+        }
+
+        await session.transport.handleRequest(req, res, body);
         return;
       }
 
-      let session = headerSessionId ? sessions.get(headerSessionId) : undefined;
-      let isNewSession = false;
-
-      if (!session) {
-        if (!isInitializeRequest(body)) {
-          // A session id we do not know means the session is gone: 404 tells the client
-          // to re-initialize (spec). A *missing* header is simply a bad request.
+      if (req.method === 'GET' || req.method === 'DELETE') {
+        const entry = headerSessionId ? sessions.get(headerSessionId) : undefined;
+        const session = entry?.session;
+        if (!session) {
           if (headerSessionId) {
             sendJson(res, 404, jsonRpcError(null, -32000, 'Not Found: unknown Mcp-Session-Id'));
           } else {
@@ -230,76 +312,41 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
           }
           return;
         }
-        let upstream: Upstream;
-        try {
-          upstream = resolveUpstream();
-          void upstream.info; // fails fast with a proxy error when nothing is upstream
-        } catch (error) {
-          const reason = proxyReasonOf(error);
-          if (reason !== undefined && isRetryableOffline(reason)) {
-            sendJson(
-              res,
-              503,
-              proxyJsonRpcError(null, reason, (error as Error).message),
-              { 'retry-after': String(OFFLINE_RETRY_AFTER_SECONDS) },
-            );
-            return;
-          }
-          const code = typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : -32603;
-          sendJson(res, 500, jsonRpcError(null, code, (error as Error).message));
+        entry!.lastSeen = Date.now();
+        if (req.method === 'DELETE') {
+          sessions.delete(session.sessionId ?? headerSessionId ?? '');
+          await session.transport.handleRequest(req, res);
+          await session.close();
           return;
         }
-        const created = await createEndpointSession(upstream, {
-          onSessionInitialized: (sessionId) => sessions.set(sessionId, created),
-          onClosed: () => {
-            if (created.sessionId) sessions.delete(created.sessionId);
-          },
-        });
-        session = created;
-        isNewSession = true;
-        options.onSession?.(created);
-      }
-
-      await session.transport.handleRequest(req, res, body);
-
-      // A rejected initialize (e.g. 406 for a bad Accept header) never produced a
-      // session id, so the session just built is unreachable: drop it again.
-      if (isNewSession && !session.sessionId) {
-        await session.close();
-      }
-      return;
-    }
-
-    if (req.method === 'GET' || req.method === 'DELETE') {
-      const session = headerSessionId ? sessions.get(headerSessionId) : undefined;
-      if (!session) {
-        if (headerSessionId) {
-          sendJson(res, 404, jsonRpcError(null, -32000, 'Not Found: unknown Mcp-Session-Id'));
-        } else {
-          sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: missing Mcp-Session-Id'));
-        }
-        return;
-      }
-      if (req.method === 'DELETE') {
-        sessions.delete(session.sessionId ?? headerSessionId ?? '');
         await session.transport.handleRequest(req, res);
-        await session.close();
         return;
       }
-      await session.transport.handleRequest(req, res);
-      return;
-    }
 
-    sendJson(res, 405, jsonRpcError(null, -32000, 'Method Not Allowed'));
+      sendJson(res, 405, jsonRpcError(null, -32000, 'Method Not Allowed'));
+    } catch (error) {
+      // Callers do `void handler.handle(...)` (and the SDK transport may reject
+      // mid-stream): never let a throw escape into an unhandled rejection.
+      // `sendJson` no-ops to `res.end()` when the transport already sent headers.
+      const code = typeof (error as { code?: unknown })?.code === 'number' ? (error as { code: number }).code : -32603;
+      sendJson(res, 500, jsonRpcError(null, code, error instanceof Error ? error.message : String(error)));
+    } finally {
+      // A session that never produced a session id (rejected initialize, e.g. 406 for
+      // a bad Accept header, or a throw above) is unreachable: drop it again.
+      if (newSession && !newSession.sessionId) {
+        await newSession.close().catch(() => undefined);
+      }
+    }
   };
 
   return {
     handle,
     sessionCount: () => sessions.size,
     close: async () => {
+      clearInterval(reaper);
       const all = [...sessions.values()];
       sessions.clear();
-      await Promise.all(all.map((s) => s.close()));
+      await Promise.all(all.map((entry) => entry.session.close()));
     },
   };
 }
