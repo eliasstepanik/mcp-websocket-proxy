@@ -24,6 +24,7 @@ import { appendFileSync, existsSync, renameSync, statSync, unlinkSync } from 'no
 import { LOG_MAX_BACKUPS, LOG_MAX_BYTES, type ClientConfig, type ClientLogConfig, type ClientServerConfig, type LogLevel } from './config.js';
 import { createFilesystemServer } from './filesystem.js';
 import { LocalMcpServer, type LocalServerState } from './local-server.js';
+import { killProcessTree } from './process-tree.js';
 import { TunnelClient } from './tunnel-client.js';
 
 /** Reported in `hello.clientVersion`. */
