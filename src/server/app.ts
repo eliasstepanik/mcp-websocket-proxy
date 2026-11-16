@@ -330,7 +330,34 @@ export function createApp(options: AppOptions): App {
     trackedByClient.clear();
   };
 
-  return { httpServer, registry, upstreams, close };
+  return { httpServer, registry, upstreams, status, close };
+}
+
+/**
+ * The 401 for `/mcp/<name>` and `/status`: a JSON-RPC error body (what a Warren
+ * client renders) plus the `WWW-Authenticate` challenge the spec asks for. The
+ * message never mentions the token, only that one was needed.
+ */
+function sendUnauthorized(res: ServerResponse): void {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(401, {
+    'content-type': 'application/json',
+    'www-authenticate': 'Bearer realm="mcp-proxy"',
+  });
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: PROXY_ERROR_CODE,
+        message: 'Unauthorized: a valid bearer token is required',
+        data: { source: PROXY_ERROR_SOURCE, reason: 'unauthorized' },
+      },
+    }),
+  );
 }
 
 /** A JSON-RPC-shaped error for routing failures (unknown route or server name). */
