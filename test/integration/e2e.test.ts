@@ -71,7 +71,7 @@ async function startTunnel(): Promise<void> {
   }
   client = new TunnelClient({
     url: tunnelUrl,
-    token: TOKEN,
+    token: CLIENT_TOKEN,
     clientId: CLIENT_ID,
     servers: locals,
   });
