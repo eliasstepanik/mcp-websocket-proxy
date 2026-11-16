@@ -170,6 +170,17 @@ export function createApp(options: AppOptions): App {
 
   const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
+    const startedAt = process.hrtime.bigint();
+    // One log line per request, written when the response is finished. Only
+    // method/path/status/duration: never headers, params or tokens.
+    res.once('finish', () => {
+      options.onRequest?.({
+        method: req.method ?? 'GET',
+        path,
+        status: res.statusCode,
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+      });
+    });
 
     if (path === '/healthz') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -182,8 +193,29 @@ export function createApp(options: AppOptions): App {
       return;
     }
 
+    if (path === '/status') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { allow: 'GET' });
+        res.end();
+        return;
+      }
+      if (!verifyBearer(req.headers.authorization, endpointToken)) {
+        sendUnauthorized(res);
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(status()));
+      return;
+    }
+
     const match = MCP_ROUTE_RE.exec(path);
     if (match) {
+      // Auth before the body is read: an unauthenticated caller must not be able to
+      // make the proxy buffer a POST body.
+      if (!verifyBearer(req.headers.authorization, endpointToken)) {
+        sendUnauthorized(res);
+        return;
+      }
       const name = decodeURIComponent(match[1] ?? '');
       if (!SERVER_NAME_PATTERN.test(name)) {
         sendJsonRpc(res, 404, `Not Found: invalid server name ${JSON.stringify(name)}`);
