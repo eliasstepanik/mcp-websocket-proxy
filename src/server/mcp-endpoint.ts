@@ -267,6 +267,33 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
   };
 }
 
+/**
+ * Rebuild an error thrown by the upstream leg so the SDK serialises it verbatim.
+ *
+ * The SDK's `McpError` prefixes `message` with `MCP error <code>: `, and that prefix
+ * accumulates once per hop (fixture -> local client -> this endpoint -> Warren).
+ * The SDK's own error path only reads `code`/`message`/`data`, so we hand it a plain
+ * error carrying the *unprefixed* message.
+ */
+function toWireError(error: unknown): Error {
+  const code = typeof (error as { code?: unknown })?.code === 'number' ? (error as { code: number }).code : -32603;
+  const raw = error instanceof Error ? error.message : String(error);
+  return Object.assign(new Error(stripMcpErrorPrefixes(raw)), {
+    code,
+    ...((error as { data?: unknown })?.data !== undefined ? { data: (error as { data?: unknown }).data } : {}),
+  });
+}
+
+/** Strip every repeated `MCP error -1234: ` prefix from a message. */
+function stripMcpErrorPrefixes(message: string): string {
+  let out = message;
+  for (;;) {
+    const stripped = out.replace(/^MCP error -?\d+: /, '');
+    if (stripped === out) return out;
+    out = stripped;
+  }
+}
+
 function readProgressToken(params: unknown): string | number | undefined {  const meta = isRecord(params) ? params._meta : undefined;
   if (!isRecord(meta)) return undefined;
   const token = meta.progressToken;
