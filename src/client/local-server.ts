@@ -10,13 +10,24 @@
  * - stderr is captured line-by-line and prefixed with the server name so logs from
  *   several children stay attributable.
  * - if the child dies unexpectedly it is restarted with exponential backoff (unless
- *   `restart: false`), and `onStateChange` fires so the tunnel can tell the server
- *   to fail in-flight requests with `server_down`.
+ *   `restart: false`), and `onStateChange` fires so the tunnel can fail in-flight
+ *   requests with `server_down`.
+ *
+ * Intercepting upstream notifications: `Protocol` takes ownership of
+ * `transport.onmessage` in `connect()`, but it *preserves and calls* a handler that
+ * was already installed. So we install ours on the transport before `connect()` and
+ * get a copy of every inbound JSON-RPC message without disturbing the SDK.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { McpError, ResultSchema, type InitializeResult } from '@modelcontextprotocol/sdk/types.js';
+import {
+  isJSONRPCNotification,
+  isJSONRPCResultResponse,
+  type Notification,
+  type Request,
+  ResultSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
 import type { Upstream, UpstreamInfo, UpstreamNotificationListener, UpstreamRequestOptions } from '../shared/upstream.js';
 import { proxyError, toRelayableError } from '../shared/errors.js';
@@ -27,22 +38,25 @@ export interface LocalServerOptions {
   /** Server name; must match `^[a-z0-9][a-z0-9_-]{0,62}$`. */
   name: string;
   command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  cwd?: string;
+  args?: string[] | undefined;
+  env?: Record<string, string> | undefined;
+  cwd?: string | undefined;
   /** Restart the child automatically when it exits unexpectedly. Default true. */
-  restart?: boolean;
+  restart?: boolean | undefined;
   /** Backoff schedule in ms; the last entry repeats. Default `[250, 500, 1000, 2000, 5000, 10000]`. */
-  restartDelays?: number[];
+  restartDelays?: number[] | undefined;
   /** Give up after this many consecutive failed restarts. Default Infinity. */
-  maxRestarts?: number;
+  maxRestarts?: number | undefined;
   /** Per-request timeout in ms passed to the SDK client. Default 60000. */
-  requestTimeoutMs?: number;
-  /** Called on every state change (also on every successful (re)initialisation). */
-  onStateChange?: (state: LocalServerState, detail?: string) => void;
+  requestTimeoutMs?: number | undefined;
+  /** Called on every state change. */
+  onStateChange?: ((state: LocalServerState, detail?: string) => void) | undefined;
   /** Called with each prefixed stderr line. Defaults to `process.stderr.write`. */
-  onStderrLine?: (line: string) => void;
+  onStderrLine?: ((line: string) => void) | undefined;
 }
+
+const DEFAULT_RESTART_DELAYS = [250, 500, 1000, 2000, 5000, 10000];
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
 export class LocalMcpServer implements Upstream {
   readonly name: string;
@@ -75,6 +89,7 @@ export class LocalMcpServer implements Upstream {
     return this.state === 'running' && this.client !== undefined;
   }
 
+  /** Cached `initialize` result of the child process. */
   get info(): UpstreamInfo {
     if (!this.cachedInfo) {
       throw proxyError('server_down', `local server "${this.name}" has not initialised yet`);
@@ -108,15 +123,16 @@ export class LocalMcpServer implements Upstream {
       throw proxyError('server_down', `local server "${this.name}" is not running`);
     }
 
-    const requestOptions: { signal?: AbortSignal; timeout?: number; onprogress?: (p: { progress: number; total?: number; message?: string }) => void } = {};
+    const requestOptions: Parameters<Client['request']>[2] = {
+      timeout: options?.timeoutMs ?? this.options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    };
     if (options?.signal) requestOptions.signal = options.signal;
-    requestOptions.timeout = options?.timeoutMs ?? this.options.requestTimeoutMs ?? 60_000;
     if (options?.onProgress) {
       requestOptions.onprogress = (progress) => options.onProgress?.(progress as Record<string, unknown>);
     }
 
     try {
-      return await client.request({ method, ...(params !== undefined ? { params } : {}) }, ResultSchema, requestOptions);
+      return await client.request({ method, ...(params !== undefined ? { params } : {}) } as Request, ResultSchema, requestOptions);
     } catch (error) {
       throw toRelayableError(error);
     }
@@ -127,18 +143,21 @@ export class LocalMcpServer implements Upstream {
     if (!client || this.state !== 'running') {
       throw proxyError('server_down', `local server "${this.name}" is not running`);
     }
-    await client.notification({ method, ...(params !== undefined ? { params } : {}) });
+    await client.notification({ method, ...(params !== undefined ? { params } : {}) } as Notification);
   }
 
   subscribe(listener: UpstreamNotificationListener): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 
-  // ---------------------------------------------------------------- internals
+  // ------------------------------------------------------------------ internals
 
   private async spawn(): Promise<void> {
     this.setState('starting');
+
     const transport = new StdioClientTransport({
       command: this.options.command,
       ...(this.options.args ? { args: this.options.args } : {}),
@@ -151,24 +170,42 @@ export class LocalMcpServer implements Upstream {
 
     transport.stderr?.on('data', (chunk: Buffer) => this.onStderr(chunk));
 
-    client.onnotification = (notification) => {
-      const { method, params } = notification as { method: string; params?: unknown };
-      for (const listener of this.listeners) {
-        try {
-          listener({ method, ...(params !== undefined ? { params } : {}) });
-        } catch {
-          /* a listener must never break the relay */
+    // Snapshot of the initialise result, captured off the wire so we can report the
+    // protocol version the child actually negotiated.
+    let negotiatedProtocolVersion: string | undefined;
+
+    transport.onmessage = (message) => {
+      if (isJSONRPCResultResponse(message)) {
+        const result = message.result as { protocolVersion?: unknown } | undefined;
+        if (result && typeof result.protocolVersion === 'string') {
+          negotiatedProtocolVersion = result.protocolVersion;
+        }
+        return;
+      }
+      if (isJSONRPCNotification(message)) {
+        // Progress belongs to a specific in-flight request and is delivered by the
+        // SDK to that request's `onprogress` callback; don't double-deliver it.
+        if (message.method === 'notifications/progress') return;
+        const params = message.params;
+        for (const listener of this.listeners) {
+          try {
+            listener({ method: message.method, ...(params !== undefined ? { params } : {}) });
+          } catch {
+            /* one bad listener must never break the relay */
+          }
         }
       }
     };
 
-    const onClosed = (): void => {
+    client.onclose = () => {
       if (this.client !== client) return;
       this.client = undefined;
       this.transport = undefined;
       this.handleUnexpectedExit();
     };
-    client.onclose = onClosed;
+    client.onerror = () => {
+      /* Transport-level noise (unknown progress tokens, unknown message ids) is not fatal here. */
+    };
 
     try {
       await client.connect(transport);
@@ -176,15 +213,17 @@ export class LocalMcpServer implements Upstream {
       await client.close().catch(() => undefined);
       this.cachedInfo = undefined;
       this.handleUnexpectedExit((error as Error).message);
-      if (this.state === 'failed') {
-        throw proxyError('server_down', `local server "${this.name}" failed to start: ${(error as Error).message}`);
-      }
-      return;
+      throw proxyError('server_down', `local server "${this.name}" failed to start: ${(error as Error).message}`);
     }
 
     this.client = client;
     this.transport = transport;
-    this.cachedInfo = toUpstreamInfo(client.getInstructions() ? client.getInstructions() : undefined, client);
+    this.cachedInfo = {
+      protocolVersion: negotiatedProtocolVersion ?? '2025-06-18',
+      capabilities: client.getServerCapabilities() ?? {},
+      serverInfo: client.getServerVersion() ?? { name: this.name, version: '0.0.0' },
+      ...(client.getInstructions() !== undefined ? { instructions: client.getInstructions() } : {}),
+    };
     this.restartAttempt = 0;
     this.setState('running');
   }
@@ -194,19 +233,19 @@ export class LocalMcpServer implements Upstream {
       this.setState('stopped', detail);
       return;
     }
+    if (this.options.restart === false) {
+      this.setState('failed', detail ?? 'child exited');
+      return;
+    }
     const maxRestarts = this.options.maxRestarts ?? Number.POSITIVE_INFINITY;
     if (this.restartAttempt >= maxRestarts) {
       this.setState('failed', detail ?? 'child exited');
       return;
     }
-    const delays = this.options.restartDelays ?? [250, 500, 1000, 2000, 5000, 10000];
+    const delays = this.options.restartDelays ?? DEFAULT_RESTART_DELAYS;
     const delay = delays[Math.min(this.restartAttempt, delays.length - 1)] ?? 0;
     this.restartAttempt += 1;
     this.setState('backoff', detail ?? 'child exited');
-    if (this.options.restart === false) {
-      this.setState('failed', 'restart disabled');
-      return;
-    }
     this.restartTimer = setTimeout(() => {
       this.restartTimer = undefined;
       void this.spawn().catch(() => undefined);
@@ -231,20 +270,3 @@ export class LocalMcpServer implements Upstream {
     this.options.onStateChange?.(state, detail);
   }
 }
-
-function toUpstreamInfo(instructions: string | undefined, client: Client): UpstreamInfo {
-  const info: InitializeResult = {
-    protocolVersion: '2025-06-18',
-    capabilities: client.getServerCapabilities() ?? {},
-    serverInfo: client.getServerVersion() ?? { name: 'unknown', version: '0.0.0' },
-    ...(instructions !== undefined ? { instructions } : {}),
-  };
-  return {
-    protocolVersion: info.protocolVersion,
-    capabilities: info.capabilities,
-    serverInfo: info.serverInfo,
-    ...(info.instructions !== undefined ? { instructions: info.instructions } : {}),
-  };
-}
-
-export { McpError };
