@@ -269,7 +269,11 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
     if (req.method === 'GET' || req.method === 'DELETE') {
       const session = headerSessionId ? sessions.get(headerSessionId) : undefined;
       if (!session) {
-        sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: unknown or missing Mcp-Session-Id'));
+        if (headerSessionId) {
+          sendJson(res, 404, jsonRpcError(null, -32000, 'Not Found: unknown Mcp-Session-Id'));
+        } else {
+          sendJson(res, 400, jsonRpcError(null, -32000, 'Bad Request: missing Mcp-Session-Id'));
+        }
         return;
       }
       if (req.method === 'DELETE') {
