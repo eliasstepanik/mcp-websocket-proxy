@@ -186,7 +186,8 @@ export function createApp(options: AppOptions): App {
     if (event.type === 'server_down') {
       // Only names with live Warren sessions can miss anything; the endpoint is
       // looked up, never created, so a name nobody opened costs nothing.
-      if (endpoints.get(event.server)?.sessionCount() !== 0) downSince.add(event.server);
+      const endpoint = endpoints.get(event.server);
+      if (endpoint !== undefined && endpoint.sessionCount() > 0) downSince.add(event.server);
       return;
     }
     if (event.type === 'server_up') {
@@ -207,7 +208,8 @@ export function createApp(options: AppOptions): App {
     }
     if (event.type === 'connection_lost') {
       for (const name of event.servers) {
-        if (endpoints.get(name)?.sessionCount() !== 0) downSince.add(name);
+        const endpoint = endpoints.get(name);
+        if (endpoint !== undefined && endpoint.sessionCount() > 0) downSince.add(name);
       }
       untrack(event.clientId);
     }
