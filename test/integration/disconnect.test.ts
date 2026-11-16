@@ -668,6 +668,77 @@ describe('disconnect (h): a late answer must not cross connections', () => {
 });
 
 // ---------------------------------------------------------------------------
+// (j) takeover while a request is still in flight on the replaced socket
+// ---------------------------------------------------------------------------
+
+describe('disconnect (j): takeover with a request in flight on the old socket', () => {
+  it('fails the pending call promptly, closes the old socket with 4002 and lets the new one serve', async () => {
+    const first = client!;
+    const firstSocket = socketOf(first);
+    const closed = new Promise<number>((resolve) => {
+      (firstSocket as unknown as { on(e: 'close', cb: (code: number) => void): void }).on('close', (code: number) => resolve(code));
+    });
+
+    // Record what the registry does with the inherited names: the down->up sequence
+    // is far too short to poll for, so it is read off the events.
+    const alphaEvents: string[] = [];
+    app!.registry.on((event) => {
+      if (event.type === 'server_up' && event.server === 'alpha') alphaEvents.push('server_up');
+      if (event.type === 'server_down' && event.server === 'alpha') alphaEvents.push(`server_down:${event.reason}`);
+    });
+
+    const alpha = await connectServer('alpha');
+    const pending = alpha.client.callTool({ name: 'slow', arguments: { ms: 10_000 } });
+    await waitFor(async () => (await readFixtureState(alpha.client)).calls === 1, 'the slow call to reach the child', 10_000);
+
+    // The same machine dials again while the call is still running on the old socket.
+    const second = await startTunnel({ clientId: CLIENT_ID });
+    expect(second).not.toBe(first);
+
+    // The abandoned request is failed at once: the old handler is gone and its ids may
+    // never be answered again. The app's own request deadline is 300s and the test
+    // timeout is 30s, so a prompt rejection can only come from the takeover itself.
+    const startedAt = Date.now();
+    const error = await errorOf(pending);
+    const elapsed = Date.now() - startedAt;
+    expect(error).toBeInstanceOf(McpError);
+    expect(error.code).toBe(PROXY_ERROR_CODE);
+    expect((error.data as { source?: string; reason?: string })).toMatchObject({
+      source: PROXY_ERROR_SOURCE,
+      reason: 'client_disconnected',
+    });
+    expect(elapsed).toBeLessThan(5_000);
+
+    // The replaced socket is closed with the takeover code.
+    expect(await closed).toBe(4002);
+    await waitFor(() => first.state === 'reconnecting', 'the replaced client to start reconnecting', 5_000);
+
+    // The inherited names went down (nothing may be routed over a socket that has
+    // advertised nothing yet) and came back when client 2 re-advertised them.
+    expect(alphaEvents).toEqual(expect.arrayContaining(['server_down:connection_replaced', 'server_up']));
+    expect(alphaEvents.indexOf('server_down:connection_replaced')).toBeLessThan(alphaEvents.indexOf('server_up'));
+
+    // `/status` agrees: one client, both names up again, on the new socket.
+    await waitFor(
+      () => app?.registry.lookup('alpha')?.up === true && app?.registry.lookup('beta')?.up === true,
+      'both names up again',
+      20_000,
+    );
+    expect(app?.registry.connectionCount).toBe(1);
+    expect(app?.registry.get(CLIENT_ID)?.ws).not.toBe(firstSocket);
+    const status = await fetchStatus();
+    expect(status.clients).toEqual([{ clientId: CLIENT_ID, servers: [{ name: 'alpha', up: true }, { name: 'beta', up: true }] }]);
+
+    // And the survivor really serves: a fresh call goes over client 2's socket.
+    expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'takeover in flight' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:takeover in flight' }],
+    });
+
+    await alpha.client.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // (i) the tunnel itself drops, then dials again: same Warren session id
 // ---------------------------------------------------------------------------
 
