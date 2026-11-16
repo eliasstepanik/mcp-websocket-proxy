@@ -119,7 +119,9 @@ export function createLogger(log: ClientLogConfig, secrets: readonly string[] = 
       const incoming = Buffer.byteLength(line, 'utf8');
       if (currentSize() + incoming > maxBytes) rotate();
       appendFileSync(file, line, 'utf8');
-      fileSize = (fileSize ?? 0) + incoming;
+      // `undefined` (set by a failed rotation) stays `undefined`: the next write
+      // re-stats the file instead of trusting a count that is no longer true.
+      if (fileSize !== undefined) fileSize += incoming;
     } catch {
       // A log file that cannot be written must never take the agent down; the
       // stderr copy above already carries the line.
