@@ -232,7 +232,7 @@ export class LocalMcpServer implements Upstream {
     const pending = { client, transport };
     this.pending = pending;
 
-    transport.stderr?.on('data', (chunk: Buffer) => this.onStderr(chunk));
+    transport.stderr?.on('data', (chunk: Buffer) => this.onStderr(stderrSink, chunk));
 
     // Snapshot of the initialise result, captured off the wire so we can report the
     // protocol version the child actually negotiated.
