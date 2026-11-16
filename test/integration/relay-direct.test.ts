@@ -226,11 +226,11 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
     const pending = client
       .callTool({ name: 'slow', arguments: { ms: 5_000 } }, undefined, { signal: controller.signal })
       .catch((e: unknown) => e);
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     controller.abort('user cancelled');
     await pending;
 
-    await waitFor(async () => true);
+    await waitFor(async () => (await readFixtureState(client)).lastCancellation !== null, 5_000, 'fixture to observe cancellation');
     const state = await readFixtureState(client);
     const cancellation = state.lastCancellation as { reason?: string } | null;
     expect(cancellation).not.toBeNull();
