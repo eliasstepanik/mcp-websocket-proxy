@@ -3,12 +3,14 @@
  * tunnel WebSocket upgrade on the **same** port.
  *
  * Routes:
- * - `upgrade /tunnel`               -> a {@link TunnelHandler} per socket
- *                                      (authentication is added in T3; every
- *                                      `/tunnel` upgrade is accepted for now)
+ * - `upgrade /tunnel`               -> a {@link TunnelHandler} per socket, but only
+ *                                      after the upgrade request carried a valid
+ *                                      **client** bearer token (T3)
  * - `POST/GET/DELETE /mcp/<name>`   -> one {@link McpEndpointHandler} per server
- *                                      name, bound to `upstreams.get(name)`
- * - `GET /healthz`                  -> `200 {"status":"ok"}`
+ *                                      name, bound to `upstreams.get(name)`, behind
+ *                                      the **endpoint** bearer token
+ * - `GET /healthz`                  -> `200 {"status":"ok"}`, no auth (load balancers)
+ * - `GET /status`                   -> who is connected: behind the endpoint token
  *
  * Wiring between the layers: {@link TunnelUpstreams} resolves the tunnel that
  * currently serves a name through a `clientId -> tunnel` map, so the app keeps that
