@@ -19,7 +19,17 @@
  *                   `maxReconnectDelayMs`, ±20% jitter, forever; close codes
  *                   4002/4003 wait 60s instead. After every `welcome` the
  *                   `server_up` frames are re-sent (repeated when the info
- *                   changed). Local children keep running while disconnected.
+ *                   changed). Local children keep running while disconnected,
+ *                   but every request that was in flight is aborted: its answer
+ *                   could only reach a connection that no longer exists (and a
+ *                   late answer sent on a *later* connection would be read as an
+ *                   answer to that connection's request with the same id).
+ * - liveness -> the server keeps the connection alive with `ping`s at
+ *               `welcome.heartbeatIntervalMs`. A `ping` re-arms a watchdog of
+ *               twice that interval; when it fires the socket is silently dead
+ *               (sleep/resume, a NAT that dropped its mapping, a cable pulled
+ *               without a FIN), so it is `terminate()`d and the normal reconnect
+ *               path runs. TCP keepalive is enabled on the socket as well.
  */
 
 import WebSocket from 'ws';
