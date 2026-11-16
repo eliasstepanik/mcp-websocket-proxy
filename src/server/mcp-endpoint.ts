@@ -350,20 +350,50 @@ async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-function jsonRpcError(id: unknown, code: number, message: string, data?: unknown): unknown {
+function jsonRpcError(id: unknown, code: number, message: string): unknown {
   return {
     jsonrpc: '2.0',
     id: id ?? null,
-    error: { code, message, ...(data !== undefined ? { data } : { source: PROXY_ERROR_SOURCE, code: PROXY_ERROR_CODE }) },
+    error: { code, message },
   };
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+/**
+ * A proxy-originated error on the wire: JSON-RPC code {@link PROXY_ERROR_CODE} with
+ * `data: { source, reason }` so Warren can tell proxy failures from upstream ones.
+ * The proxy's own metadata never goes inside `error` itself (that would overwrite the
+ * JSON-RPC `code`).
+ */
+function proxyJsonRpcError(id: unknown, reason: ProxyErrorReason, message: string): unknown {
+  return {
+    jsonrpc: '2.0',
+    id: id ?? null,
+    error: {
+      code: PROXY_ERROR_CODE,
+      message,
+      data: { source: PROXY_ERROR_SOURCE, reason },
+    },
+  };
+}
+
+/** The reason a thrown error carries, when it is a proxy error. */
+function proxyReasonOf(error: unknown): ProxyErrorReason | undefined {
+  if (!isProxyError(error)) return undefined;
+  const reason = (error as { reason?: unknown }).reason;
+  return (PROXY_ERROR_REASONS as readonly string[]).includes(String(reason)) ? (reason as ProxyErrorReason) : 'timeout';
+}
+
+/** Reasons that mean "try again later": they answer `initialize` with a 503. */
+function isRetryableOffline(reason: ProxyErrorReason): boolean {
+  return reason === 'offline' || reason === 'server_down';
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown, extraHeaders: Record<string, string> = {}): void {
   if (res.headersSent) {
     res.end();
     return;
   }
-  res.writeHead(status, { 'content-type': 'application/json' });
+  res.writeHead(status, { 'content-type': 'application/json', ...extraHeaders });
   res.end(JSON.stringify(body));
 }
 
