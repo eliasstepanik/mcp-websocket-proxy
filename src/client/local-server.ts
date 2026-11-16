@@ -355,11 +355,12 @@ export class LocalMcpServer implements Upstream {
     sink.buffer += chunk.toString('utf8');
     const lines = sink.buffer.split('\n');
     sink.buffer = lines.pop() ?? '';
-    if (Buffer.byteLength(sink.buffer, 'utf8') > MAX_STDERR_BUFFER_BYTES) {
-      // A child that never sends a newline must not grow the buffer without bound:
-      // force-flush the pending partial line with a newline of its own.
-      lines.push(sink.buffer);
-      sink.buffer = '';
+    // A child that never sends a newline must not grow the buffer without bound:
+    // force-flush the pending partial line (with a newline of its own) past the cap.
+    while (Buffer.byteLength(sink.buffer, 'utf8') > MAX_STDERR_BUFFER_BYTES) {
+      const head = sink.buffer.slice(0, MAX_STDERR_BUFFER_BYTES);
+      lines.push(head);
+      sink.buffer = sink.buffer.slice(head.length);
     }
     for (const line of lines) {
       if (!line.trim()) continue;
