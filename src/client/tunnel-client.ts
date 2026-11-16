@@ -248,6 +248,7 @@ export class TunnelClient {
     ws.on('open', () => {
       if (this.ws !== ws) return;
       this.attempt = 0;
+      this.enableTcpKeepAlive(ws);
       this.setState('connected');
       this.send({
         type: 'hello',
@@ -260,12 +261,21 @@ export class TunnelClient {
       if (this.ws !== ws) return;
       this.onMessage(data);
     });
+    // Control frames are not surfaced as `message`, so the server's keepalive `ping`
+    // has its own event: every ping re-arms the watchdog.
+    ws.on('ping', () => {
+      if (this.ws !== ws) return;
+      this.armLivenessTimer();
+    });
     ws.on('close', (code: number) => {
       if (this.ws !== ws) return;
       this.ws = undefined;
-      // Children keep running while disconnected: in-flight requests are *not*
-      // aborted here; their answers simply have nowhere to go until the next
-      // `welcome` re-registers the servers.
+      this.clearLivenessTimer();
+      // The local children keep running, but a request whose answer can never be
+      // delivered again is work nobody waits for: abort it so the child stops and
+      // the answer (which would carry an id the next connection may reuse) is never
+      // produced.
+      this.abortInFlight('the tunnel connection dropped while the request was in flight');
       this.scheduleReconnect(code);
     });
     ws.on('error', () => {
