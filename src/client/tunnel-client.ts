@@ -312,12 +312,14 @@ export class TunnelClient {
     });
   }
 
-  /** Backoff: 1s doubling to `maxReconnectDelayMs`, ±20% jitter; 60s after 4002/4003. */
+  /** Backoff: 1s doubling to `maxReconnectDelayMs`, ±20% jitter; 60s after 4002/4003 or a 401 upgrade. */
   private scheduleReconnect(closeCode: number): void {
     if (this.stopped) return;
     this.setState('reconnecting');
+    const authRejected = this.authRejected;
+    this.authRejected = false;
     let delay: number;
-    if (closeCode === CLOSE_CODE_REPLACED || closeCode === CLOSE_CODE_UNAUTHORIZED) {
+    if (authRejected || closeCode === CLOSE_CODE_REPLACED || closeCode === CLOSE_CODE_UNAUTHORIZED) {
       delay = AUTH_OR_REPLACE_RETRY_MS;
       this.attempt = 0;
     } else {
