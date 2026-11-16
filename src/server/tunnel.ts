@@ -162,6 +162,7 @@ export class TunnelHandler {
     this.ws = ws;
     this.registry = registry;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? 15_000;
+    this.heartbeatTimeoutMs = opts.heartbeatTimeoutMs ?? this.heartbeatIntervalMs * 2;
     this.helloTimeoutMs = opts.helloTimeoutMs ?? 5_000;
     this.requestTimeoutMs = opts.requestTimeoutMs ?? 300_000;
     this.serverVersion = opts.serverVersion;
@@ -171,7 +172,8 @@ export class TunnelHandler {
 
     this.ws.on('message', (data: unknown) => this.onMessage(data));
     this.ws.on('pong', () => {
-      this.lastPongAt = Date.now();
+      // The socket answered: the liveness watchdog starts over at the next ping.
+      this.clearLivenessTimer();
     });
     this.ws.on('close', () => this.cleanup());
     this.ws.on('error', () => this.cleanup());
