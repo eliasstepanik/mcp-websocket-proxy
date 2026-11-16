@@ -72,6 +72,8 @@ const MAX_STDERR_BUFFER_BYTES = 64 * 1024;
 /** Per-spawn stderr state: the pid must come from *this* transport, never from a later one. */
 interface StderrSink {
   transport: StdioClientTransport;
+  /** The pid of this spawn, remembered as soon as it is known (a dead transport reports `null`). */
+  pid: number | null;
   buffer: string;
 }
 
