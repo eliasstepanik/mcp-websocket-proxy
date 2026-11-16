@@ -220,9 +220,10 @@ export class TunnelClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
+    this.clearLivenessTimer();
     for (const unsub of this.unsubs.values()) unsub();
     this.unsubs.clear();
-    this.inFlight.clear();
+    this.abortInFlight('the tunnel client stopped');
     this.advertised.clear();
     const ws = this.ws;
     this.ws = undefined;
