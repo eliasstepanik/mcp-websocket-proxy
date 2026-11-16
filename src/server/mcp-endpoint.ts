@@ -99,6 +99,7 @@ export async function createEndpointSession(upstream: Upstream, options: McpEndp
     try {
       return await upstream.request(request.method, params, {
         ...(extra.signal ? { signal: extra.signal } : {}),
+        ...(transport.sessionId !== undefined ? { sessionId: transport.sessionId } : {}),
         ...(warrenToken !== undefined
           ? {
               onProgress: (progress: UpstreamProgress) => {
