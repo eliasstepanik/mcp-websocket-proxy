@@ -542,7 +542,63 @@ describe('disconnect (f): a name conflict from another clientId', () => {
 // (g) a request deadline
 // ---------------------------------------------------------------------------
 
-describe('disconnect (g): a request deadline', () => {
+describe('disconnect (h): a late answer must not cross connections', () => {
+  it('gives a request after a reconnect its own id and drops the stale response', async () => {
+    const alpha = await connectServer('alpha');
+
+    // The first tunneled request on this connection: its id is what a handler that
+    // counts from 1 again after a reconnect would hand out a second time.
+    const oldFrames = sniffFrames(client!);
+    const stale = alpha.client.callTool({ name: 'slow', arguments: { ms: 10_000 } });
+    await waitFor(async () => (await readFixtureState(alpha.client)).calls === 1, 'the slow call to reach the child', 10_000);
+    const staleId = lastRequestId(oldFrames);
+
+    // Drop the tunnel. The client aborts the in-flight call (so the child is told to
+    // stop) and dials again; the server side builds a brand new handler for it.
+    socketOf(client!).terminate();
+    const dropped = await errorOf(stale);
+    expect((dropped.data as { reason?: string })).toMatchObject({ reason: 'client_disconnected' });
+    await waitFor(() => app?.registry.lookup('alpha') === undefined, 'the dead connection to leave the registry', 10_000);
+    await waitFor(() => app?.registry.lookup('alpha')?.up === true, 'the client to reconnect and re-advertise', 20_000);
+
+    const sentOnNewSocket = sniffOutgoing(client!);
+
+    // A new call on the fresh connection. It must not be handed the id the previous
+    // connection still has an outstanding answer for.
+    const fresh = alpha.client.callTool({ name: 'slow', arguments: { ms: 1_200 } });
+    const newFrames = sniffFrames(client!);
+    const freshId = await (async () => {
+      await waitForFrame(newFrames, (frame) => JSON.parse(frame).type === 'request', 'the new request frame', 10_000);
+      return lastRequestId(newFrames);
+    })();
+    expect(freshId).not.toBe(staleId);
+
+    // Now let the stale answer arrive, written straight onto the *new* socket as a
+    // client that leaked it would: it names the old id and carries a result that
+    // belongs to the dead connection.
+    socketOf(client!).send(JSON.stringify({ type: 'response', id: staleId, result: { content: [{ type: 'text', text: 'STALE' }] } }));
+
+    // The new call answers with its own result, untouched by the stale frame.
+    await waitFor(() => sentOnNewSocket.some((frame) => frame.includes('"response"')), 'the client to answer the new request', 10_000);
+    expect(await fresh).toEqual({ content: [{ type: 'text', text: 'slow:done:1200' }] });
+
+    // And the client never wrote a frame for the old id onto the new socket: the
+    // aborted call's answer had nowhere to go and was dropped.
+    expect(sentOnNewSocket.filter((frame) => (JSON.parse(frame) as { id?: unknown }).id === staleId)).toEqual([]);
+
+    // The child was told to stop working on the abandoned call.
+    await waitFor(async () => (await readFixtureState(alpha.client)).lastCancellation !== null, 'the fixture to observe the cancellation', 10_000);
+    const state = await readFixtureState(alpha.client);
+    expect(String((state.lastCancellation as { reason?: string }).reason)).toBe('client_disconnected');
+
+    // The tunnel is still healthy.
+    expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'no cross-talk' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:no cross-talk' }],
+    });
+
+    await alpha.client.close();
+  });
+});
   it('answers Warren with -32050 timeout and sends cancel to the client', async () => {
     // The app under test gives every tunneled request a short deadline.
     await restartApp({ requestTimeoutMs: 400 });
