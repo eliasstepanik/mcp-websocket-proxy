@@ -259,7 +259,7 @@ export class TunnelClient {
     });
     ws.on('message', (data: unknown) => {
       if (this.ws !== ws) return;
-      this.onMessage(data);
+      this.onMessage(data, ws);
     });
     // Control frames are not surfaced as `message`, so the server's keepalive `ping`
     // has its own event: every ping re-arms the watchdog.
