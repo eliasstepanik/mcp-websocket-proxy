@@ -36,7 +36,7 @@ const info = (name: string): UpstreamInfo => ({
 // ---------------------------------------------------------------------------
 
 let httpServer: HttpServer;
-let wss: WebSocketServer<true>;
+let wss: WebSocketServer;
 let registry: Registry<WsLike>;
 let handlers: TunnelHandler[];
 let url = '';
