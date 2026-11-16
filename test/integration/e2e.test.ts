@@ -145,7 +145,7 @@ async function readFixtureState(warren: Client): Promise<Record<string, unknown>
 }
 
 beforeAll(async () => {
-  app = createApp({});
+  app = createApp({ clientToken: CLIENT_TOKEN, endpointToken: ENDPOINT_TOKEN });
   await new Promise<void>((resolve) => app!.httpServer.listen(0, '127.0.0.1', resolve));
   const address = app.httpServer.address();
   if (address === null || typeof address === 'string') throw new Error('failed to bind test server');
