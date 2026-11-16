@@ -48,7 +48,7 @@ async function startStack(): Promise<void> {
     command: process.execPath,
     args: [FIXTURE],
     env: { ...process.env, FIXTURE_START_LOG: startLogFile },
-    restartDelays: [50],
+    restartDelays: [250],
     requestTimeoutMs: 20_000,
     onStderrLine: (line) => stderrLines.push(line),
     onStateChange: (state) => stateChanges.push(state),
