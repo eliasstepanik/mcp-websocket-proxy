@@ -29,6 +29,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { WebSocketServer } from 'ws';
 
 import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE } from '../shared/errors.js';
+import type { UpstreamInfo } from '../shared/upstream.js';
 import { verifyBearer } from './auth.js';
 import { MAX_BODY_BYTES, SERVER_NAME_PATTERN, createMcpEndpointHandler, type McpEndpointHandler } from './mcp-endpoint.js';
 import { Registry, type WsLike } from './registry.js';
@@ -96,6 +97,20 @@ export interface App {
 const MCP_ROUTE_RE = /^\/mcp\/([^/?#]+)\/?$/;
 
 /**
+ * The `list_changed` notification a capability implies, and where to read the flag.
+ * Used to synthesise the notifications a server could not send while it was down
+ * (see the `server_up` branch of the registry listener in {@link createApp}).
+ */
+const LIST_CHANGED_NOTIFICATIONS: ReadonlyArray<{
+  readonly method: string;
+  readonly enabled: (info: UpstreamInfo) => boolean;
+}> = [
+  { method: 'notifications/tools/list_changed', enabled: (info) => info.capabilities.tools?.listChanged === true },
+  { method: 'notifications/resources/list_changed', enabled: (info) => info.capabilities.resources?.listChanged === true },
+  { method: 'notifications/prompts/list_changed', enabled: (info) => info.capabilities.prompts?.listChanged === true },
+];
+
+/**
  * Builds the single-port server: HTTP MCP endpoints plus the tunnel WebSocket
  * upgrade on the same listener. The returned server is **not** listening yet;
  * the caller calls `httpServer.listen(...)`.
@@ -156,17 +171,46 @@ export function createApp(options: AppOptions): App {
     upstreams.untrack(clientId);
   };
 
+  /**
+   * Names that went down while Warren sessions were open. A server that comes back
+   * could not tell those sessions anything about the gap, so the proxy synthesises
+   * the `list_changed` notifications its capabilities allow (see below).
+   */
+  const downSince = new Set<string>();
+
   // Registry events are the only place a `clientId` becomes observable, so the
   // tunnel map is maintained from them: a connection that owns a name has said
   // `server_up` for it, and `connection_lost` fires exactly when the registry
   // forgets a connection (a socket replaced by a reconnect emits neither).
   const offRegistry = registry.on((event) => {
+    if (event.type === 'server_down') {
+      // Only names with live Warren sessions can miss anything; the endpoint is
+      // looked up, never created, so a name nobody opened costs nothing.
+      if (endpoints.get(event.server)?.sessionCount() !== 0) downSince.add(event.server);
+      return;
+    }
     if (event.type === 'server_up') {
       const tunnel = tunnelForClient(event.clientId);
       if (tunnel) track(event.clientId, tunnel);
+      if (downSince.delete(event.server)) {
+        // Down -> up: tell the sessions that survived the outage that the lists they
+        // cached may be stale. The upstream cannot do this itself (it was not
+        // reachable), so the proxy sends what the advertised capabilities allow.
+        const endpoint = endpoints.get(event.server);
+        if (endpoint && endpoint.sessionCount() > 0) {
+          for (const { method, enabled } of LIST_CHANGED_NOTIFICATIONS) {
+            if (enabled(event.info)) endpoint.notifyAll(method);
+          }
+        }
+      }
       return;
     }
-    if (event.type === 'connection_lost') untrack(event.clientId);
+    if (event.type === 'connection_lost') {
+      for (const name of event.servers) {
+        if (endpoints.get(name)?.sessionCount() !== 0) downSince.add(name);
+      }
+      untrack(event.clientId);
+    }
   });
 
   /**
@@ -328,6 +372,7 @@ export function createApp(options: AppOptions): App {
     });
     tunnelsBySocket.clear();
     trackedByClient.clear();
+    downSince.clear();
   };
 
   return { httpServer, registry, upstreams, status, close };
