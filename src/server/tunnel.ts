@@ -30,7 +30,6 @@ import {
   PROTOCOL_VERSION,
   SERVER_NAME_RE,
   TunnelProtocolError,
-  type ClientToServer,
   type Progress,
   type Response,
   type ServerToClient,
