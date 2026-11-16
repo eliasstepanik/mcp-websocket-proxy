@@ -308,6 +308,60 @@ export class TunnelClient {
     this.current = state;
   }
 
+  // ------------------------------------------------------------------ liveness
+
+  /**
+   * Ask the OS to probe the underlying TCP connection. The WebSocket-level watchdog
+   * is what actually detects a silent drop; this is the cheap belt underneath it.
+   */
+  private enableTcpKeepAlive(ws: WebSocket): void {
+    try {
+      // `_socket` is the `net.Socket` `ws` runs on; it is not part of the public typings.
+      const socket = (ws as unknown as { _socket?: { setKeepAlive(on: boolean, delay: number): void } })._socket;
+      socket?.setKeepAlive?.(true, TCP_KEEPALIVE_INITIAL_DELAY_MS);
+    } catch {
+      /* keepalive is best-effort; the ping watchdog still covers the socket */
+    }
+  }
+
+  private armLivenessTimer(): void {
+    this.clearLivenessTimer();
+    if (this.stopped || this.ws === undefined) return;
+    this.livenessTimer = setTimeout(() => {
+      this.livenessTimer = undefined;
+      const ws = this.ws;
+      if (!ws) return;
+      // Nobody answered our pings for two full intervals: the socket is a zombie that
+      // will never deliver anything. Kill it so `close` runs and the reconnect starts.
+      try {
+        ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    }, this.heartbeatIntervalMs * LIVENESS_MISS_FACTOR);
+    this.livenessTimer.unref?.();
+  }
+
+  private clearLivenessTimer(): void {
+    if (this.livenessTimer) {
+      clearTimeout(this.livenessTimer);
+      this.livenessTimer = undefined;
+    }
+  }
+
+  /** Aborts every request the local servers are running, then forgets them. */
+  private abortInFlight(reason: string): void {
+    const pending = [...this.inFlight.values()];
+    this.inFlight.clear();
+    for (const { controller } of pending) {
+      try {
+        controller.abort(reason);
+      } catch {
+        /* an abort must never break the reconnect */
+      }
+    }
+  }
+
   // ------------------------------------------------------------------ framing
 
   private onMessage(data: unknown): void {
