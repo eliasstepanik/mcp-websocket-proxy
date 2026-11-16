@@ -238,7 +238,7 @@ export class TunnelHandler {
   // -------------------------------------------------------------------------
 
   private onMessage(data: unknown): void {
-    let msg: ClientToServer;
+    let msg: TunnelMessage;
     try {
       msg = parseTunnelMessage(toText(data), 'in');
     } catch (error) {
@@ -268,7 +268,7 @@ export class TunnelHandler {
         // out of the registry here; bad names are handled in {@link ackInvalidServerName}.
         let ack: { ok: true } | { ok: false; error: 'name_conflict' | 'invalid_name' } = { ok: false, error: 'name_conflict' };
         try {
-          ack = this.registry.markServerUp(this.clientId, msg.server, msg.info);
+          ack = this.registry.markServerUp(this.clientId, msg.server, msg.info as unknown as UpstreamInfo);
         } catch {
           /* unknown client: ack stays not-ok */
         }
@@ -297,6 +297,8 @@ export class TunnelHandler {
         return;
       }
       default: {
+        // `welcome`/`request`/`cancel`/`server_ack` are server->client frames: a
+        // client sending them is speaking the wrong direction.
         const unknown: string = (msg as { type?: string }).type ?? 'unknown';
         this.close(CLOSE_CODE_PROTOCOL, `unknown message type: ${unknown}`);
       }
