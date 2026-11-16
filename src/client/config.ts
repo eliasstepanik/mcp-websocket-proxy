@@ -317,8 +317,13 @@ function parseLogSection(root: Record<string, unknown>, errors: string[]): Clien
 function parseFilesystemSection(root: Record<string, unknown>, errors: string[]): FilesystemServerConfig {
   const section = readSection(root, 'filesystem', errors);
   const enabled = readBoolean(section, 'enabled', 'filesystem', errors, true);
-  const name = (readString(section, 'name', 'filesystem', errors, { default: DEFAULT_FILESYSTEM_SERVER_NAME }) ??
-    DEFAULT_FILESYSTEM_SERVER_NAME).trim();
+  const rawName = readString(section, 'name', 'filesystem', errors);
+  const name = rawName?.trim() ? rawName.trim() : DEFAULT_FILESYSTEM_SERVER_NAME;
+  if (!SERVER_NAME_RE.test(name)) {
+    errors.push(
+      `invalid server name ${JSON.stringify(rawName)}: filesystem.name must match ${SERVER_NAME_RE}`,
+    );
+  }
   const roots = readStringArray(section, 'roots', 'filesystem', errors);
   if (enabled && roots.length === 0) {
     errors.push('filesystem.roots is required when the filesystem server is enabled');
