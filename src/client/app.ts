@@ -230,6 +230,14 @@ export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
         // Tunnel first: while it is live a request could still be dispatched to a
         // child we are about to kill.
         tunnel.stop();
+        // Windows: the child is often an `npx.cmd` shim whose real `node.exe` is a
+        // grandchild, and closing the transport only closes the shim. Kill the whole
+        // tree from the pid the transport reports, *before* the normal stop, so no
+        // grandchild is orphaned. POSIX keeps its existing SIGTERM path untouched.
+        if (process.platform === 'win32') {
+          const pids = [...servers.values()].map((server) => server.pid).filter((pid): pid is number => pid !== null);
+          for (const pid of pids) await killProcessTree(pid);
+        }
         for (const server of servers.values()) await server.stop();
         log({ level: 'info', message: 'closed' });
       })();
