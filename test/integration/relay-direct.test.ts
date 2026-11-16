@@ -400,10 +400,62 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
         }),
       });
       expect(response.status).toBe(503);
-      const body = (await response.json()) as { error: { code: number; data: { source: string; reason: string } } };
+      expect(response.headers.get('retry-after')).toBe('10');
+      const body = (await response.json()) as {
+        jsonrpc: string;
+        id: unknown;
+        error: { code: number; message: string; data: { source: string; reason: string } };
+      };
+      expect(body.jsonrpc).toBe('2.0');
+      expect(body.id).toBeNull();
       expect(body.error.code).toBe(PROXY_ERROR_CODE);
+      // `source`/`reason` belong in `error.data`, never next to `error.code`.
+      expect(body.error.data).toEqual({ source: PROXY_ERROR_SOURCE, reason: 'offline' });
       expect(body.error.data.source).toBe(PROXY_ERROR_SOURCE);
       expect(body.error.data.reason).toBe('offline');
+      expect('source' in body.error).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('answers initialize with 500 when the upstream resolver fails for a non-proxy reason', async () => {
+    const broken: Upstream = {
+      name: 'broken-server',
+      get info(): UpstreamInfo {
+        throw new Error('config is broken');
+      },
+      available: false,
+      request: async () => {
+        throw new Error('config is broken');
+      },
+      notification: async () => undefined,
+      subscribe: () => () => undefined,
+    };
+    const brokenHandler = createMcpEndpointHandler({ name: 'broken-server', upstream: broken });
+    const server = createServer((req, res) => void brokenHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/mcp/broken-server`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+      expect(response.status).toBe(500);
+      expect(response.headers.get('retry-after')).toBeNull();
+      const body = (await response.json()) as { id: unknown; error: { code: number; message: string; data?: unknown } };
+      expect(body.id).toBe(7);
+      expect(body.error.code).toBe(-32603);
+      expect(body.error.message).toBe('config is broken');
+      expect(body.error.data).toBeUndefined();
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
