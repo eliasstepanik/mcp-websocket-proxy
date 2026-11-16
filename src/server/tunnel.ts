@@ -152,9 +152,9 @@ export class TunnelHandler {
   private clientId: string | undefined;
   private helloTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private closed = false;
   /** Fires when no `pong` arrived within {@link heartbeatTimeoutMs}: the socket is a zombie. */
   private livenessTimer: ReturnType<typeof setTimeout> | undefined;
-  private closed = false;
   private readonly pending = new Map<string, InFlight>();
   private readonly subscribers = new Map<string, Set<NotificationListener>>();
 
