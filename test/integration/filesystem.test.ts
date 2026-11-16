@@ -247,7 +247,7 @@ describe('filesystem config rules', () => {
   it('accepts the documented example file (config.example.yaml)', () => {
     const example = new URL('../../config.example.yaml', import.meta.url);
     const check = checkConfigText(readFileSync(example, 'utf8'), {
-      ...testEnv(),
+      MCP_PROXY_CLIENT_TOKEN: CLIENT_TOKEN,
       DATABASE_URL: 'postgres://me:secret@db.internal/app',
     });
     expect(check.errors).toEqual([]);
