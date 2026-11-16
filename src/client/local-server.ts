@@ -242,7 +242,7 @@ export class LocalMcpServer implements Upstream {
       previous.buffer = '';
       this.emitStderrLine(previous, dangling);
     }
-    const stderrSink: StderrSink = { transport, buffer: '' };
+    const stderrSink: StderrSink = { transport, pid: null, buffer: '' };
     this.stderrSink = stderrSink;
 
     // Remember the in-flight pair so `stop()` can close it (and so a later `stop()`
