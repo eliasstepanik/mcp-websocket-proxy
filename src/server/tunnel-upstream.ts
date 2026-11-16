@@ -3,7 +3,7 @@
  *
  * A {@link TunnelUpstream} is *not* a connection: it is a stable handle for one
  * server name that resolves the current tunnel on **every** call. The tunnel
- * behind a name changes whenever the client reconnects (a new {@link TunnelHandler}
+ * behind a name changes whenever the client reconnects (a new `TunnelHandler`
  * takes over the same `clientId`), so caching a tunnel here would pin a dead
  * socket; caching nothing would break the endpoint, which holds one upstream per
  * Warren session. The name-keyed handle is the seam that survives reconnects.
