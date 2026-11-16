@@ -123,7 +123,7 @@ export async function createEndpointSession(upstream: Upstream, options: McpEndp
   const unsubscribe = upstream.subscribe((notification: UpstreamNotification) => {
     // JSON-RPC `params` is optional, never null: the upstream may legitimately have
     // sent `params: null`, which the SDK's schemas reject. Normalise it away.
-    const params = notification.params ?? undefined;
+    const params = (notification.params ?? undefined) as Record<string, unknown> | undefined;
     void server
       .notification({
         method: notification.method,
