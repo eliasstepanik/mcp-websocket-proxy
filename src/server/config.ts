@@ -16,6 +16,8 @@
  * problem, never the value.
  */
 
+import { MIN_TOKEN_LENGTH } from './auth.js';
+
 /** Console verbosity, most verbose first. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
