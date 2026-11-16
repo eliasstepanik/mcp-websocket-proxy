@@ -388,3 +388,36 @@ describe('disconnect (c): reconnect with the same session id', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// (e) a second connection with the same clientId takes over
+// ---------------------------------------------------------------------------
+
+describe('disconnect (e): takeover by a second connection with the same clientId', () => {
+  it('closes the first socket with 4002 and lets the second one serve', async () => {
+    const first = client!;
+    const firstSocket = socketOf(first);
+    const closed = new Promise<number>((resolve) => {
+      (firstSocket as unknown as { on(e: 'close', cb: (code: number) => void): void }).on('close', (code: number) => resolve(code));
+    });
+
+    // Same clientId, same local servers: this is the same machine dialing again.
+    const second = await startTunnel({ clientId: CLIENT_ID });
+    expect(second).not.toBe(first);
+
+    expect(await closed).toBe(4002);
+    await waitFor(() => first.state === 'reconnecting', 'the replaced client to start reconnecting', 5_000);
+
+    // The registry now points at the new socket, and only one connection is left.
+    await waitFor(() => app?.registry.connectionCount === 1, 'exactly one connection', 5_000);
+    expect(app?.registry.get(CLIENT_ID)?.ws).not.toBe(firstSocket);
+    expect(app?.registry.lookup('alpha')?.up).toBe(true);
+
+    // The survivor really serves: a call through the endpoint goes to the child.
+    const alpha = await connectServer('alpha');
+    expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'takeover' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:takeover' }],
+      });
+    await alpha.client.close();
+  });
+});
