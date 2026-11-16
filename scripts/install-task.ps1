@@ -1,0 +1,190 @@
+<#
+.SYNOPSIS
+    Registers the MCP WebSocket Proxy client as a Task Scheduler task for the
+    current user, so the work PC starts exposing its local MCP servers at logon
+    and keeps trying after a crash.
+
+.DESCRIPTION
+    Creates (or replaces, with -Force) the task "McpWebsocketProxyClient":
+
+      trigger    At log on, for the current user only
+      action     node <RepoRoot>\dist\client\main.js --config <ConfigPath>
+      settings   hidden, no instance limit override (a second start is ignored),
+                 restart on failure: 3 attempts, 1 minute apart, no execution
+                 time limit (the agent is meant to run forever)
+
+    By default the task is registered with LogonType S4U ("run whether the user
+    is logged on or not", no stored password): it then runs in its own session,
+    so logging off does not kill it and logging back on does not start a second
+    copy. S4U needs the "Replace a process level token" right; if registration
+    fails because of that, re-run with -LogonType Interactive (the task then
+    lives and dies with the desktop session, and the At log on trigger brings it
+    back at the next logon).
+
+    Run this once, from an ordinary (non-elevated) PowerShell:
+
+      cd C:\repos\mcp-websocket-proxy
+      npm ci
+      npm run build
+      .\scripts\install-task.ps1
+
+    With explicit paths:
+
+      .\scripts\install-task.ps1 -RepoRoot C:\repos\mcp-websocket-proxy `
+                                 -ConfigPath C:\Users\me\AppData\Roaming\mcp-websocket-proxy\config.yaml
+
+    Remove it again with .\scripts\uninstall-task.ps1.
+    See docs/windows-client.md for the install steps and the smoke checklist.
+
+.PARAMETER NodePath
+    node.exe to run. Default: the node on PATH.
+
+.PARAMETER RepoRoot
+    Repository checkout that contains dist\client\main.js. Default: the parent
+    of this script's folder (i.e. the repo this script lives in).
+
+.PARAMETER ConfigPath
+    Config file passed to --config. Default: %APPDATA%\mcp-websocket-proxy\config.yaml,
+    the same default the client itself uses.
+
+.PARAMETER TaskName
+    Task Scheduler task name. Default: McpWebsocketProxyClient.
+
+.PARAMETER LogonType
+    S4U (default, survives logoff), Interactive (tied to the desktop session)
+    or Password (requires -Credential).
+
+.PARAMETER Credential
+    Required with -LogonType Password: the user account Task Scheduler runs as.
+
+.PARAMETER Force
+    Replace the task when it already exists.
+#>
+
+[CmdletBinding()]
+param(
+    [string] $NodePath = '',
+    [string] $RepoRoot = '',
+    [string] $ConfigPath = '',
+    [string] $TaskName = 'McpWebsocketProxyClient',
+    [ValidateSet('S4U', 'Interactive', 'Password')]
+    [string] $LogonType = 'S4U',
+    [pscredential] $Credential,
+    [switch] $Force
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+if ($env:OS -ne 'Windows_NT') {
+    throw 'install-task.ps1 only runs on Windows.'
+}
+
+# --- defaults ----------------------------------------------------------------
+
+if ([string]::IsNullOrWhiteSpace($NodePath)) {
+    $onPath = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $onPath) {
+        $onPath = Get-Command node -ErrorAction SilentlyContinue
+    }
+    if (-not $onPath) {
+        throw 'node.exe was not found on PATH; install Node 24+ or pass -NodePath C:\path\to\node.exe'
+    }
+    $NodePath = $onPath.Source
+}
+
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    # scripts\install-task.ps1 lives one level below the repository root.
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+}
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $ConfigPath = Join-Path $env:APPDATA 'mcp-websocket-proxy\config.yaml'
+}
+
+$NodePath = (Resolve-Path -LiteralPath $NodePath).Path
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+
+$Entry = Join-Path $RepoRoot 'dist\client\main.js'
+if (-not (Test-Path -LiteralPath $Entry)) {
+    throw "cannot find $Entry - run `npm ci` and `npm run build` in $RepoRoot first."
+}
+if (-not (Test-Path -LiteralPath $ConfigPath)) {
+    Write-Warning "config file not found: $ConfigPath (copy config.example.yaml there, then start the task)"
+} else {
+    # Fail here rather than in a hidden task that retries three times and gives up.
+    & $NodePath $Entry --config $ConfigPath --check
+    if ($LASTEXITCODE -ne 0) {
+        throw "the config did not pass --check (exit $LASTEXITCODE): $ConfigPath"
+    }
+}
+
+# --- task definition ---------------------------------------------------------
+
+$ArgumentList = @("`"$Entry`"", '--config', "`"$ConfigPath`"")
+$Action = New-ScheduledTaskAction -Execute $NodePath -Argument $ArgumentList -WorkingDirectory $RepoRoot
+
+$UserId = "$env:USERDOMAIN\$env:USERNAME"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
+
+# Hidden: no console window. RestartCount/RestartInterval: the crash policy.
+# ExecutionTimeLimit 0: never let Task Scheduler kill a healthy agent.
+# MultipleInstancesPolicy Ignore: "do not start a new instance if one is running".
+$Settings = New-ScheduledTaskSettingsSet `
+    -Hidden `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+    -MultipleInstances Ignore
+
+if ($LogonType -eq 'Password') {
+    if (-not $Credential) {
+        throw '-LogonType Password needs -Credential.'
+    }
+    $UserId = "$($Credential.UserName)"
+    $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Password -RunLevel Limited
+} else {
+    $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
+}
+
+$Description = 'MCP WebSocket Proxy client: exposes this PC''s local MCP servers to Warren over an outbound tunnel.'
+
+# --- register ----------------------------------------------------------------
+
+$common = @{
+    TaskName    = $TaskName
+    Action      = $Action
+    Trigger     = $Trigger
+    Settings    = $Settings
+    Principal   = $Principal
+    Description = $Description
+}
+if ($Force) {
+    $common['Force'] = $true
+}
+
+try {
+    if ($LogonType -eq 'Password') {
+        $task = Register-ScheduledTask @common -User $UserId -Password $Credential.GetNetworkCredential().Password
+    } else {
+        $task = Register-ScheduledTask @common
+    }
+} catch {
+    if ($LogonType -ne 'S4U') {
+        throw
+    }
+    Write-Warning "S4U registration failed ($($_.Exception.Message)); retrying with -LogonType Interactive."
+    Write-Warning 'The task will then stop at logoff and start again at the next logon.'
+    $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited
+    $task = Register-ScheduledTask @common -Principal $Principal
+}
+
+Write-Host "registered '$TaskName'"
+Write-Host "  run:      $($Action.Execute) $($ArgumentList -join ' ')"
+Write-Host "  trigger:  at log on ($UserId), restart on failure: 3x / 1 min"
+Write-Host "  logon:    $LogonType"
+Write-Host "start it now with:  Start-ScheduledTask -TaskName '$TaskName'"
+Write-Host "check it with:      Get-ScheduledTask -TaskName '$TaskName' | Get-ScheduledTaskInfo"
