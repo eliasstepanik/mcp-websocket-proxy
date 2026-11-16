@@ -44,7 +44,7 @@ let tunnelUrl = '';
 let client: TunnelClient | undefined;
 /** Every tunnel started since the last `stopTunnel`, so none can leak. */
 let tunnels: TunnelClient[] = [];
-let locals: Map<string, LocalMcpServer>;
+let locals: Map<string, LocalMcpServer> | undefined;
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -99,12 +99,13 @@ async function makeLocals(): Promise<Map<string, LocalMcpServer>> {
 
 /** Starts the tunnel client over `locals` and waits for both names to be up. */
 async function startTunnel(options: { clientId?: string; servers?: Map<string, LocalMcpServer>; url?: string } = {}): Promise<TunnelClient> {
-  locals = options.servers ?? locals ?? (await makeLocals());
+  if (!locals) locals = await makeLocals();
+  const servers = options.servers ?? locals;
   const tunnel = new TunnelClient({
     url: options.url ?? tunnelUrl,
     token: CLIENT_TOKEN,
     clientId: options.clientId ?? CLIENT_ID,
-    servers: locals,
+    servers,
   });
   client = tunnel;
   tunnels.push(tunnel);
@@ -115,10 +116,20 @@ async function startTunnel(options: { clientId?: string; servers?: Map<string, L
   return tunnel;
 }
 
+/** Stops every tunnel and every child started since the last `beforeEach`. */
 async function stopTunnel(): Promise<void> {
   for (const tunnel of tunnels.splice(0)) tunnel.stop();
   client = undefined;
   for (const local of locals?.values() ?? []) await local.stop();
+  // The children are dead: the next test must spawn its own, never reuse these.
+  locals = undefined;
+}
+
+/** One of the fixture children the harness started. */
+function localOf(name: string): LocalMcpServer {
+  const local = locals?.get(name);
+  if (!local) throw new Error(`${name} is not wired up`);
+  return local;
 }
 
 /** The `ws.WebSocket` a {@link TunnelClient} currently holds (private field, reached on purpose). */
@@ -349,8 +360,7 @@ describe('disconnect (c): reconnect with the same session id', () => {
 
     // Down: the local child stops (the tunnel itself stays up), so the name is
     // registered but down.
-    const local = locals.get('alpha');
-    if (!local) throw new Error('alpha is not wired up');
+    const local = localOf('alpha');
     await local.stop();
     await waitFor(() => app?.registry.lookup('alpha')?.up === false, 'alpha to be marked down', 10_000);
 
@@ -428,8 +438,7 @@ describe('disconnect (e): takeover by a second connection with the same clientId
 
 describe('disconnect (f): a name conflict from another clientId', () => {
   it('acks the second client with ok:false name_conflict and keeps the owner serving', async () => {
-    const alpha = locals.get('alpha');
-    if (!alpha) throw new Error('alpha is not wired up');
+    const alpha = localOf('alpha');
 
     // A different machine claiming the same name: the ack is the only feedback the
     // client gets, so read it off the wire.
