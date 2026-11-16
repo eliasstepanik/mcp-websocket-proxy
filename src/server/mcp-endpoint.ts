@@ -27,10 +27,23 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest, type JSONRPCRequest, type Result } from '@modelcontextprotocol/sdk/types.js';
 
 import type { Upstream, UpstreamNotification, UpstreamProgress } from '../shared/upstream.js';
-import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE, proxyError } from '../shared/errors.js';
+import {
+  PROXY_ERROR_CODE,
+  PROXY_ERROR_REASONS,
+  PROXY_ERROR_SOURCE,
+  isProxyError,
+  proxyError,
+  type ProxyErrorReason,
+} from '../shared/errors.js';
 
 /** Max bytes accepted for a single JSON-RPC POST body. */
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+/**
+ * `Retry-After` (seconds) sent with the 503 that answers `initialize` while nothing
+ * is upstream: the tunnel may come back at any time, so keep the hint short.
+ */
+const OFFLINE_RETRY_AFTER_SECONDS = 10;
 
 /** Valid MCP server names (no dots: Warren splits `mcp.<server>.<tool>` on the first dot). */
 export const SERVER_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
