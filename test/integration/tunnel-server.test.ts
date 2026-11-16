@@ -132,6 +132,15 @@ class TestClient {
 
 const clients: TestClient[] = [];
 
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function connect(options: { clientId?: string; hello?: boolean } = {}): Promise<TestClient> {
   const client = new TestClient(new WebSocket(url));
   clients.push(client);
