@@ -84,6 +84,11 @@ export class UpstreamRpcError extends Error {
 export interface TunnelHandlerOptions {
   /** Interval between `ws.ping()` keepalives. Default 15000. */
   heartbeatIntervalMs?: number;
+  /**
+   * How long a connection may stay silent (no `pong` to our `ping`) before it is
+   * terminated. Default `heartbeatIntervalMs * 2`, i.e. one missed ping.
+   */
+  heartbeatTimeoutMs?: number;
   /** How long to wait for the first `hello` before closing with 4004. Default 5000. */
   helloTimeoutMs?: number;
   /** Default per-request deadline; `sendRequest` may override it per call. Default 300000. */
