@@ -242,10 +242,25 @@ export class LocalMcpServer implements Upstream {
     try {
       await client.connect(transport);
     } catch (error) {
+      const abandoned = this.stopping || this.pending !== pending;
+      if (this.pending === pending) this.pending = undefined;
       await client.close().catch(() => undefined);
+      if (abandoned) {
+        // `stop()` already closed this child and reported `stopped`: nothing to restart.
+        return;
+      }
       this.cachedInfo = undefined;
       this.handleUnexpectedExit((error as Error).message);
       throw proxyError('server_down', `local server "${this.name}" failed to start: ${(error as Error).message}`);
+    }
+
+    const abandoned = this.stopping || this.pending !== pending;
+    this.pending = undefined;
+    if (abandoned) {
+      // `stop()` ran while the handshake was in flight: never adopt this child, or it
+      // would leak and flip the state back to `running`.
+      await client.close().catch(() => undefined);
+      return;
     }
 
     this.client = client;
