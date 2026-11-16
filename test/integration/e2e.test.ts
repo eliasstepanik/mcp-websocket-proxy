@@ -93,7 +93,9 @@ async function connectServer(
 ): Promise<{ client: Client; transport: StreamableHTTPClientTransport; notifications: string[] }> {
   const notifications: string[] = [];
   const warren = new Client({ name: 'warren-e2e', version: '1.0.0' });
-  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${name}`));
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp/${name}`), {
+    requestInit: { headers: { authorization: bearerHeader(ENDPOINT_TOKEN) } },
+  });
   transport.onmessage = (message) => {
     const candidate = message as { method?: unknown };
     if (typeof candidate.method === 'string' && !('id' in message)) notifications.push(candidate.method);
