@@ -168,8 +168,25 @@ export function createApp(options: AppOptions): App {
     if (event.type === 'connection_lost') untrack(event.clientId);
   });
 
-  const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+  /**
+   * The `/status` payload: one row per connected client, each listing the server
+   * names it owns with their current state. Built from the registry alone, so a
+   * client that has said `hello` but no `server_up` yet shows up with no servers.
+   */
+  const status = (): { clients: ClientStatus[]; serverVersion: string } => ({
+    clients: registry
+      .connections()
+      .sort((a, b) => (a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0))
+      .map((connection) => ({
+        clientId: connection.clientId,
+        servers: [...connection.servers]
+          .sort()
+          .map((name) => ({ name, up: registry.lookup(name)?.up === true })),
+      })),
+    serverVersion,
+  });
 
+  const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     const startedAt = process.hrtime.bigint();
     // One log line per request, written when the response is finished. Only
