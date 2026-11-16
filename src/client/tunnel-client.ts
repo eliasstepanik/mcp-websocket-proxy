@@ -156,7 +156,22 @@ export class TunnelClient {
     this.maxReconnectDelayMs = options.maxReconnectDelayMs ?? 30_000;
 
     for (const [name, server] of this.servers) {
-      this.unsubs.set(name, server.subscribeState((state, detail) => this.onServerState(name, state, detail)));
+      const unsubState = server.subscribeState((state, detail) => this.onServerState(name, state, detail));
+      // Upstream-originated notifications (`notifications/tools/list_changed`, ...)
+      // travel as `notification` frames; the server side routes them to the Warren
+      // sessions subscribed for this name.
+      const unsubNotifications = server.subscribe((notification) => {
+        this.send({
+          type: 'notification',
+          server: name,
+          method: notification.method,
+          ...(notification.params !== undefined ? { params: notification.params } : {}),
+        });
+      });
+      this.unsubs.set(name, () => {
+        unsubState();
+        unsubNotifications();
+      });
     }
 
     this.dial();
