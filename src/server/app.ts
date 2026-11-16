@@ -27,7 +27,8 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { WebSocketServer } from 'ws';
 
 import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE } from '../shared/errors.js';
-import { MAX_BODY_BYTES, SERVER_NAME_PATTERN, createMcpEndpointHandler, type McpEndpointHandler } from './mcp-endpoint.js';import { Registry, type WsLike } from './registry.js';
+import { MAX_BODY_BYTES, SERVER_NAME_PATTERN, createMcpEndpointHandler, type McpEndpointHandler } from './mcp-endpoint.js';
+import { Registry, type WsLike } from './registry.js';
 import { TunnelUpstreams, type TunnelUpstreamTransport } from './tunnel-upstream.js';
 import { TunnelHandler } from './tunnel.js';
 
