@@ -227,6 +227,8 @@ if (process.env.FIXTURE_START_LOG) {
   writeFileSync(process.env.FIXTURE_START_LOG, `${process.pid}\n`, { flag: 'a' });
 }
 
+await server.connect(new StdioServerTransport());
+
 // Crash-loop simulation: exit shortly after the handshake so the supervisor has to
 // restart a child that *did* initialise successfully.
 if (process.env.FIXTURE_CRASH_MS) {
@@ -238,5 +240,3 @@ if (process.env.FIXTURE_CRASH_MS) {
 if (process.env.FIXTURE_ENV_FILE) {
   writeFileSync(process.env.FIXTURE_ENV_FILE, JSON.stringify(process.env));
 }
-
-await server.connect(new StdioServerTransport());
