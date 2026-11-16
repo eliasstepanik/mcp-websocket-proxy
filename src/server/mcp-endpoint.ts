@@ -198,6 +198,13 @@ export interface McpEndpointHandler {
   handle(req: IncomingMessage, res: ServerResponse): Promise<void>;
   /** Number of live Warren sessions. */
   sessionCount(): number;
+  /**
+   * Pushes one notification to every live Warren session on this route. Used for
+   * notifications the proxy itself has to synthesise (e.g. a `list_changed` after a
+   * server went down and came back, which the upstream could not emit for the gap).
+   * Sessions without a live SSE stream drop it, exactly like upstream notifications.
+   */
+  notifyAll(method: string, params?: unknown): void;
   close(): Promise<void>;
 }
 
@@ -342,6 +349,15 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
   return {
     handle,
     sessionCount: () => sessions.size,
+    notifyAll: (method, params) => {
+      for (const entry of sessions.values()) {
+        void entry.session.server
+          .notification({ method, ...(params !== undefined ? { params } : {}) })
+          .catch(() => {
+            /* No live SSE stream for this session right now: notification dropped. */
+          });
+      }
+    },
     close: async () => {
       clearInterval(reaper);
       const all = [...sessions.values()];
