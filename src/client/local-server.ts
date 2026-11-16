@@ -93,7 +93,10 @@ export class LocalMcpServer implements Upstream {
   private restartTimer: NodeJS.Timeout | undefined;
   private stopping = false;
   private readonly listeners = new Set<UpstreamNotificationListener>();
-  private stderrBuffer = '';
+  /** stderr state of the spawn that is currently running (see {@link StderrSink}). */
+  private stderrSink: StderrSink | undefined;
+  /** When the current child reached `running`; used to decide whether it was stable. */
+  private runningSince = 0;
 
   constructor(options: LocalServerOptions) {
     this.options = options;
