@@ -148,7 +148,6 @@ export class TunnelHandler {
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private isAlive = true;
   private closed = false;
-  private nextId = 1;
   private readonly pending = new Map<string, InFlight>();
   private readonly subscribers = new Map<string, Set<NotificationListener>>();
 
