@@ -305,7 +305,7 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
   it('fails initialize with a -32050 proxy error when nothing is upstream', async () => {
     const offline: Upstream = {
       name: 'offline-server',
-      get info() {
+      get info(): UpstreamInfo {
         throw proxyError('offline', 'the work PC is not connected');
       },
       available: false,
