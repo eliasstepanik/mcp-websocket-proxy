@@ -130,7 +130,18 @@ export class LocalMcpServer implements Upstream {
     };
     if (options?.signal) requestOptions.signal = options.signal;
     if (options?.onProgress) {
-      requestOptions.onprogress = (progress) => options.onProgress?.(progress as Record<string, unknown>);
+      // The SDK hands us the raw `notifications/progress` params (`Record<string, unknown>`).
+      // Only forward well-formed progress payloads: `progress` must be a number.
+      requestOptions.onprogress = (progress) => {
+        if (typeof progress.progress !== 'number') return;
+        const { progress: value, total, message, ...rest } = progress;
+        options.onProgress?.({
+          ...rest,
+          progress: value,
+          ...(typeof total === 'number' ? { total } : {}),
+          ...(typeof message === 'string' ? { message } : {}),
+        });
+      };
     }
 
     try {
