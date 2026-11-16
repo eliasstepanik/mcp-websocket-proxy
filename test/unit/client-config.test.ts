@@ -69,7 +69,8 @@ afterAll(() => {
 
 describe('loadClientConfig: formats and defaults', () => {
   it('parses YAML', () => {
-    const config = load(`
+    const config = load(
+      `
 server:
   url: wss://warren.example.com/tunnel
   token: \${env:MCP_PROXY_CLIENT_TOKEN}
@@ -87,7 +88,9 @@ servers:
     args: ['-y', 'some-mcp-server']
     env: { API_KEY: '\${env:SOME_KEY}' }
     cwd: 'C:\\work'
-`);
+`,
+      { MCP_PROXY_CLIENT_TOKEN: TOKEN, SOME_KEY: SECRET },
+    );
     expect(config.server).toEqual({ url: 'wss://warren.example.com/tunnel', token: TOKEN, allowInsecure: false });
     expect(config.clientId).toBe('work-pc');
     expect(config.log).toEqual({
