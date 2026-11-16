@@ -169,9 +169,9 @@ function localOptions(entry: ClientServerConfig, log: ClientLogger): Constructor
  * Start every local server, then the tunnel that exposes them.
  *
  * Children are started concurrently and a failure is logged, not thrown: one
- * broken `command` must not stop the machine from serving everything else.
- *
- * @throws when no local server could be started at all (nothing to expose).
+ * broken `command` must not stop the machine from serving everything else, and
+ * neither must *all* of them being down at first — the supervisors keep retrying
+ * and the tunnel comes up regardless, so the agent recovers by itself.
  */
 export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
   const log = createLogger(config.log, [config.server.token]);
