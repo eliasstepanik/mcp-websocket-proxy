@@ -369,6 +369,104 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
     expect(body.error.source).toBeUndefined();
   });
 
+  it('answers an oversized body with 413 and a -32050 `too_large` proxy error', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { pad: 'x'.repeat(MAX_BODY_BYTES + 1024) } }),
+    });
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data: { source: string; reason: string } };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    // An oversized body is a proxy failure, not a parse error: proxy code + payload.
+    expect(body.error.code).toBe(PROXY_ERROR_CODE);
+    expect(body.error.data).toEqual({ source: PROXY_ERROR_SOURCE, reason: 'too_large' });
+  });
+
+  it('reaps an idle session; its id then answers 404', async () => {
+    const ttlHandler = createMcpEndpointHandler({ name: 'fake', upstream: local, sessionIdleTtlMs: 300 });
+    const server = createServer((req, res) => void ttlHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+    const url = `http://127.0.0.1:${address.port}/mcp/fake`;
+
+    try {
+      const initialized = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+      expect(initialized.status).toBe(200);
+      await initialized.body?.cancel();
+      const sessionId = initialized.headers.get('mcp-session-id');
+      expect(sessionId).toBeTruthy();
+      expect(ttlHandler.sessionCount()).toBe(1);
+
+      // The reaper runs every `ttl/2` (floored at 50ms): wait for it to forget the session.
+      await waitFor(() => ttlHandler.sessionCount() === 0, 5_000, 'idle session to be reaped');
+
+      const after = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-session-id': sessionId!,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+      });
+      // A reaped id is an unknown id: 404 tells the client to re-initialize (spec).
+      expect(after.status).toBe(404);
+      const body = (await after.json()) as { error: { code: number; message: string; data?: unknown } };
+      expect(body.error.code).toBe(-32000);
+      expect(body.error.message).toContain('unknown Mcp-Session-Id');
+      expect(body.error.data).toBeUndefined();
+    } finally {
+      await ttlHandler.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps a session alive while it is being used', async () => {
+    const ttlHandler = createMcpEndpointHandler({ name: 'fake', upstream: local, sessionIdleTtlMs: 400 });
+    const server = createServer((req, res) => void ttlHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+    const url = `http://127.0.0.1:${address.port}/mcp/fake`;
+
+    try {
+      const client = new Client({ name: 'warren-ttl', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(url));
+      await client.connect(transport);
+      expect(ttlHandler.sessionCount()).toBe(1);
+
+      // Keep poking the session: each request refreshes `lastSeen`, so the reaper
+      // must never touch it.
+      for (let i = 0; i < 6; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await client.listTools();
+      }
+      expect(ttlHandler.sessionCount()).toBe(1);
+      await client.close();
+    } finally {
+      await ttlHandler.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('fails initialize with a -32050 proxy error when nothing is upstream', async () => {
     const offline: Upstream = {
       name: 'offline-server',
