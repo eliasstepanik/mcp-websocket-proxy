@@ -12,7 +12,10 @@
  * the same Warren session id + a synthetic `list_changed` after down->up,
  * (d) a silently dropped socket found by the heartbeat, (e) takeover by a second
  * connection with the same `clientId`, (f) a name conflict from another
- * `clientId`, (g) a request deadline that reaches Warren *and* the client.
+ * `clientId`, (g) a request deadline that reaches Warren *and* the client,
+ * (h) a late answer from a dead connection, (i) a hard tunnel drop followed by a
+ * reconnect on the same Warren session id, (j) takeover while a request is still
+ * in flight on the replaced socket.
  */
 
 import { connect, createServer as createNetServer, type Socket } from 'node:net';
