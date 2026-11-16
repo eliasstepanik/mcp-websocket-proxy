@@ -24,7 +24,7 @@ import { McpError, ToolListChangedNotificationSchema } from '@modelcontextprotoc
 import { createMcpEndpointHandler, type McpEndpointHandler } from '../../src/server/mcp-endpoint.js';
 import { LocalMcpServer } from '../../src/client/local-server.js';
 import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE, proxyError } from '../../src/shared/errors.js';
-import type { Upstream } from '../../src/shared/upstream.js';
+import type { Upstream, UpstreamInfo } from '../../src/shared/upstream.js';
 
 const FIXTURE = new URL('../fixtures/fake-mcp-server.mjs', import.meta.url).pathname;
 
