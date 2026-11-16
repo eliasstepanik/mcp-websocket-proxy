@@ -421,3 +421,77 @@ describe('disconnect (e): takeover by a second connection with the same clientId
     await alpha.client.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// (f) a name conflict from a different clientId
+// ---------------------------------------------------------------------------
+
+describe('disconnect (f): a name conflict from another clientId', () => {
+  it('acks the second client with ok:false name_conflict and keeps the owner serving', async () => {
+    const alpha = locals.get('alpha');
+    if (!alpha) throw new Error('alpha is not wired up');
+
+    // A different machine claiming the same name: the ack is the only feedback the
+    // client gets, so read it off the wire.
+    const thief = await startTunnel({ clientId: 'disc-thief', servers: new Map([['alpha', alpha]]) });
+    const frames = sniffFrames(thief);
+    const ackFrame = await waitForFrame(
+      frames,
+      (frame) => frame.includes('"server_ack"') && frame.includes('"alpha"'),
+      'a server_ack for alpha',
+    );
+    expect(JSON.parse(ackFrame)).toEqual({ type: 'server_ack', server: 'alpha', ok: false, error: 'name_conflict' });
+
+    // Ownership stayed with the first client, and it still serves.
+    expect(app?.registry.lookup('alpha')?.clientId).toBe(CLIENT_ID);
+    expect(app?.registry.lookup('alpha')?.up).toBe(true);
+    expect(app?.registry.get('disc-thief')?.servers.size ?? 0).toBe(0);
+
+    const warren = await connectServer('alpha');
+    expect(await warren.client.callTool({ name: 'echo', arguments: { text: 'still mine' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:still mine' }],
+    });
+    await warren.client.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// (g) a request deadline
+// ---------------------------------------------------------------------------
+
+describe('disconnect (g): a request deadline', () => {
+  it('answers Warren with -32050 timeout and sends cancel to the client', async () => {
+    // The app under test gives every tunneled request a short deadline.
+    await restartApp({ requestTimeoutMs: 400 });
+    const frames = sniffFrames(client!);
+
+    const alpha = await connectServer('alpha');
+    const error = await errorOf(alpha.client.callTool({ name: 'slow', arguments: { ms: 5_000 } }));
+    expect(error).toBeInstanceOf(McpError);
+    expect(error.code).toBe(PROXY_ERROR_CODE);
+    expect((error.data as { source?: string; reason?: string })).toMatchObject({
+      source: PROXY_ERROR_SOURCE,
+      reason: 'timeout',
+    });
+
+    // The deadline also travelled to the client as a `cancel` frame, so the child
+    // stops working on a request nobody is waiting for any more.
+    const cancelFrame = await waitForFrame(frames, (frame) => frame.includes('"cancel"'), 'a cancel frame', 5_000);
+    expect(JSON.parse(cancelFrame)).toMatchObject({ type: 'cancel', reason: 'timeout' });
+
+    await waitFor(
+      async () => (await readFixtureState(alpha.client)).lastCancellation !== null,
+      'the fixture to observe the cancellation',
+      10_000,
+    );
+    const state = await readFixtureState(alpha.client);
+    expect(String((state.lastCancellation as { reason?: string }).reason)).toContain('cancel');
+
+    // The tunnel is still usable after the timed-out request.
+    expect(await alpha.client.callTool({ name: 'echo', arguments: { text: 'after the deadline' } })).toEqual({
+      content: [{ type: 'text', text: 'echo:after the deadline' }],
+    });
+
+    await alpha.client.close();
+  });
+});
