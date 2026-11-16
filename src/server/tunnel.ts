@@ -185,7 +185,7 @@ export class TunnelHandler {
     if (this.closed) {
       return Promise.reject(proxyError('client_disconnected', `tunnel for ${JSON.stringify(server)} is closed`));
     }
-    const id = this.nextId++;
+    const id = nextRequestId();
     const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
     const key = String(id);
 
