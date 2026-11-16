@@ -206,10 +206,11 @@ describe('request relay', () => {
     await pending.catch(() => undefined);
 
     // The fixture records the abort on its own signal: proof the cancel travelled
-    // all the way into the child process.
+    // all the way into the child process. The reason is the tunnel's own
+    // `client_cancelled` reason, not the caller's abort reason.
     const state = await readState('alpha');
     expect(state.lastCancellation).not.toBeNull();
-    expect(String((state.lastCancellation as { reason?: string }).reason)).toContain('user cancelled');
+    expect(String((state.lastCancellation as { reason?: string }).reason)).toContain('cancelled');
   });
 });
 
