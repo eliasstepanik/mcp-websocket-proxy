@@ -159,7 +159,6 @@ $common = @{
     Action      = $Action
     Trigger     = $Trigger
     Settings    = $Settings
-    Principal   = $Principal
     Description = $Description
 }
 if ($Force) {
@@ -170,7 +169,7 @@ try {
     if ($LogonType -eq 'Password') {
         $task = Register-ScheduledTask @common -User $UserId -Password $Credential.GetNetworkCredential().Password
     } else {
-        $task = Register-ScheduledTask @common
+        $task = Register-ScheduledTask @common -Principal $Principal
     }
 } catch {
     if ($LogonType -ne 'S4U') {
