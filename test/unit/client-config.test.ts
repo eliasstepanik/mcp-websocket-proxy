@@ -105,7 +105,7 @@ servers:
       name: 'some-server',
       command: 'npx',
       args: ['-y', 'some-mcp-server'],
-      env: { API_KEY: 'SOME_KEY' },
+      env: { API_KEY: SECRET },
       cwd: 'C:\\work',
       inheritEnv: false,
     });
