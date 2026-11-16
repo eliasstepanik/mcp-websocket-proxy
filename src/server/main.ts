@@ -39,12 +39,13 @@ function writeLine(value: unknown): void {
 }
 
 /**
- * A level-gated JSON logger. `level` is the threshold from the config; anything less
- * verbose than it is dropped. Only the message and safe extra fields are written.
+ * A level-gated JSON logger. `level` is the threshold from the config: a message is
+ * written when it is at least as severe as the threshold (a higher rank is less
+ * verbose). Only the message and safe extra fields are written.
  */
 function createLogger(level: ProxyConfig['logLevel']) {
   return (entry: { level: ProxyConfig['logLevel']; message: string; [key: string]: unknown }): void => {
-    if (logLevelRank(entry.level) > logLevelRank(level)) return;
+    if (logLevelRank(entry.level) < logLevelRank(level)) return;
     writeLine(entry);
   };
 }
