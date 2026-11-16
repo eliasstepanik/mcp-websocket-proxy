@@ -362,6 +362,10 @@ export class LocalMcpServer implements Upstream {
   }
 
   private onStderr(sink: StderrSink, chunk: Buffer): void {
+    // The pid comes from this spawn's own transport, remembered as soon as it is
+    // known: `this.transport` may already point at a newer child (startup lines) or
+    // at nothing at all (late lines from a child that already exited).
+    sink.pid ??= sink.transport.pid;
     sink.buffer += chunk.toString('utf8');
     const lines = sink.buffer.split('\n');
     sink.buffer = lines.pop() ?? '';
