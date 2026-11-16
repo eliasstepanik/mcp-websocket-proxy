@@ -21,6 +21,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { McpError, ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { createApp, type App } from '../../src/server/app.js';
+import { bearerHeader } from '../../src/server/auth.js';
 import { LocalMcpServer } from '../../src/client/local-server.js';
 import { TunnelClient } from '../../src/client/tunnel-client.js';
 import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE } from '../../src/shared/errors.js';
@@ -28,7 +29,9 @@ import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE } from '../../src/shared/errors.js
 const FIXTURE = new URL('../fixtures/fake-mcp-server.mjs', import.meta.url).pathname;
 
 const CLIENT_ID = 'e2e-pc';
-const TOKEN = '***';
+/** Two distinct tokens (>= 32 chars): the tunnel client and the MCP endpoints never share one. */
+const CLIENT_TOKEN = 'e2e-client-token-aaaaaaaaaaaaaaaaaaaa';
+const ENDPOINT_TOKEN = 'e2e-endpoint-token-bbbbbbbbbbbbbbbbbbb';
 /** The fixture's own tool list, before anything mutates it. */
 const BASE_TOOLS = ['echo', 'slow', 'progress', 'mutate', 'crash'];
 
