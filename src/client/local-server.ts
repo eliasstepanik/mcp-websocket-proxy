@@ -51,6 +51,12 @@ export interface LocalServerOptions {
   maxRestarts?: number | undefined;
   /** Per-request timeout in ms passed to the SDK client. Default 60000. */
   requestTimeoutMs?: number | undefined;
+  /**
+   * How long a child must stay up before the next restart counts as healthy again
+   * (i.e. the backoff schedule and {@link LocalServerOptions.maxRestarts} restart from
+   * zero). Default 30000.
+   */
+  stableUptimeMs?: number | undefined;
   /** Called on every state change. */
   onStateChange?: ((state: LocalServerState, detail?: string) => void) | undefined;
   /** Called with each prefixed stderr line. Defaults to `process.stderr.write`. */
