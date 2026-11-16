@@ -296,7 +296,7 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
     expect(handler!.sessionCount()).toBe(0);
   });
 
-  it('rejects requests for an unknown session id', async () => {
+  it('rejects requests for an unknown session id with 404', async () => {
     const response = await fetch(baseUrl, {
       method: 'POST',
       headers: {
@@ -306,7 +306,67 @@ describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     });
+    // 404 (not 400): the spec tells the client to re-initialize on 404.
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data?: unknown; source?: string };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('unknown Mcp-Session-Id');
+    // A protocol error carries no proxy payload of its own.
+    expect(body.error.data).toBeUndefined();
+    expect(body.error.source).toBeUndefined();
+  });
+
+  it('rejects a non-initialize POST without a session id with 400', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
     expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: number; message: string; data?: unknown } };
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('missing Mcp-Session-Id');
+    expect(body.error.data).toBeUndefined();
+  });
+
+  it('rejects an unknown session id on GET and DELETE with 404', async () => {
+    for (const method of ['GET', 'DELETE'] as const) {
+      const response = await fetch(baseUrl, {
+        method,
+        headers: { 'mcp-session-id': 'nope' },
+      });
+      expect(response.status).toBe(404);
+      const body = (await response.json()) as { error: { code: number; data?: unknown } };
+      expect(body.error.code).toBe(-32000);
+      expect(body.error.data).toBeUndefined();
+    }
+  });
+
+  it('answers a malformed JSON body with a plain -32700 parse error', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data?: unknown; source?: string };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    // The parse error keeps its own JSON-RPC code: no proxy code overwrites it.
+    expect(body.error.code).toBe(-32700);
+    expect(body.error.message).toContain('Parse error');
+    expect(body.error.data).toBeUndefined();
+    expect(body.error.source).toBeUndefined();
   });
 
   it('fails initialize with a -32050 proxy error when nothing is upstream', async () => {
