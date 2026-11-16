@@ -134,6 +134,11 @@ export class LocalMcpServer implements Upstream {
     try {
       return await client.request({ method, ...(params !== undefined ? { params } : {}) } as Request, ResultSchema, requestOptions);
     } catch (error) {
+      // Losing the child process mid-request is a proxy-level failure, not an
+      // upstream answer: report it as `server_down` so Warren can distinguish it.
+      if (error instanceof McpError && error.code === ErrorCode.ConnectionClosed && this.state !== 'running') {
+        throw proxyError('server_down', `local server "${this.name}" stopped while the request was in flight`);
+      }
       throw toRelayableError(error);
     }
   }
