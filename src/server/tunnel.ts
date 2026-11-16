@@ -148,6 +148,7 @@ export class TunnelHandler {
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private isAlive = true;
   private closed = false;
+  private nextId = 1;
   private readonly pending = new Map<string, InFlight>();
   private readonly subscribers = new Map<string, Set<NotificationListener>>();
 
@@ -185,7 +186,7 @@ export class TunnelHandler {
     if (this.closed) {
       return Promise.reject(proxyError('client_disconnected', `tunnel for ${JSON.stringify(server)} is closed`));
     }
-    const id = nextRequestId();
+    const id = this.nextId++;
     const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
     const key = String(id);
 
