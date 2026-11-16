@@ -216,7 +216,7 @@ must differ). Optional, with defaults:
 | `MCP_PROXY_REQUEST_TIMEOUT_MS`      | `300000`  | per-request relay deadline           |
 | `MCP_PROXY_MAX_MESSAGE_BYTES`       | `33554432`| tunnel frame / declared body limit   |
 | `MCP_PROXY_SESSION_IDLE_TTL_MS`     | `604800000` | idle Warren session TTL (7 days)   |
-| `MCP_PROXY_LOG_LEVEL`               | `info`    | `debug` \| `info` \| `warn` \| `error` |
+| `MCP_PROXY_LOG_LEVEL`               | `info`    | one of `debug`, `info`, `warn`, `error`                    |
 
 Logging is one JSON line per request on stdout — `{method, path, status, ms}`
 plus startup/shutdown lines. No params, no results, no headers, no tokens.
