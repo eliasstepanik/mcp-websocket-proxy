@@ -184,6 +184,14 @@ export class LocalMcpServer implements Upstream {
       if (error instanceof McpError && error.code === ErrorCode.ConnectionClosed && this.state !== 'running') {
         throw proxyError('server_down', `local server "${this.name}" stopped while the request was in flight`);
       }
+      // A deadline we set ourselves is a proxy failure too: the SDK reports it as an
+      // upstream `RequestTimeout`, which would look like the child answered with a
+      // timeout. Report it as the proxy's own `timeout` reason instead.
+      if (error instanceof McpError && error.code === ErrorCode.RequestTimeout) {
+        throw proxyError('timeout', `local server "${this.name}" did not answer within ${requestOptions.timeout}ms`, {
+          timeoutMs: requestOptions.timeout,
+        });
+      }
       throw toRelayableError(error);
     }
   }
