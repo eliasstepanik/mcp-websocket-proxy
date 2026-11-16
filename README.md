@@ -53,18 +53,20 @@ published host ports — Caddy reaches the container over a shared Docker networ
 
 ```
 /home/proxy/services/stacks/McpWebsocketProxy/
-├── deploy/
-│   ├── docker-compose.yml
-│   └── .env            # chmod 600, never committed
-└── src/ package.json   # the repository
+└── src/                # the repository (git clone)
+    ├── Dockerfile
+    └── deploy/
+        ├── docker-compose.yml
+        └── .env        # chmod 600, never committed
 ```
 
 ```bash
 git clone <repo> /home/proxy/services/stacks/McpWebsocketProxy/src
 ```
 
-(If your checkout is laid out differently, adjust `build.context` in
-`deploy/docker-compose.yml`; it is `..`, i.e. the repository root.)
+`build.context` in `deploy/docker-compose.yml` is `..`, i.e. the repository root,
+which is where the `Dockerfile` is. Everything below runs from
+`/home/proxy/services/stacks/McpWebsocketProxy/src/deploy`.
 
 ### 2. Tokens
 
