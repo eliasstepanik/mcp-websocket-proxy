@@ -92,7 +92,7 @@ import { Registry } from './src/server/registry.js';
     servers: new Map(),
   });
   await new Promise<void>((r) => setTimeout(r, 1200));
-  console.log('4 state', client.state, 'dials in 1.2s =', dials, '(expect 2: initial + one after the fast path was replaced by 60s)');
+  console.log('4 state', client.state, 'dials in 1.2s =', dials, '(expect 1: the retry waits the 60s auth delay)');
   client.stop();
   await new Promise<void>((r) => server.close(() => r()));
 }
