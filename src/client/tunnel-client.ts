@@ -17,7 +17,9 @@
  * - `cancel` -> aborts the matching in-flight request (AbortController)
  * - socket close -> reconnect with 1s doubling backoff capped at
  *                   `maxReconnectDelayMs`, ±20% jitter, forever; close codes
- *                   4002/4003 wait 60s instead. After every `welcome` the
+ *                   4002/4003 wait 60s instead, and so does an upgrade request that
+ *                   was answered with HTTP 401 (logged once, without the token).
+ *                   After every `welcome` the
  *                   `server_up` frames are re-sent (repeated when the info
  *                   changed). Local children keep running while disconnected,
  *                   but every request that was in flight is aborted: its answer
