@@ -46,6 +46,8 @@ export interface ProxyConfig {
   logLevel: LogLevel;
 }
 
+import { MIN_TOKEN_LENGTH } from './auth.js';
+
 /** Raised for a bad environment: the message always names the variable. */
 export class ConfigError extends Error {
   constructor(message: string) {
