@@ -218,9 +218,15 @@ export function createMcpEndpointHandler(options: McpEndpointHandlerOptions): Mc
         });
         session = created;
         bindSession(created);
+        pendingNewSession = created;
       }
 
       await session.transport.handleRequest(req, res, body);
+      // A failed initialize (e.g. 406 on a bad Accept header) never produced a
+      // session id, so the session we just built is unreachable: drop it.
+      if (pendingNewSession && !pendingNewSession.sessionId) {
+        await pendingNewSession.close();
+      }
       return;
     }
 
