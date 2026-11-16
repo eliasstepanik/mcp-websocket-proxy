@@ -232,7 +232,7 @@ describe('server.url', () => {
   it('requires url and token', () => {
     const check = checkConfigText('filesystem:\n  roots: ["/tmp"]\n', baseEnv());
     expect(check.errors).toContain('server.url is required');
-    expect(check.errors).toContain('server.token is required: set it (usually as ${env:MCP_PROXY_CLIENT_TOKEN})');
+    expect(check.errors).toContain('server.token is required');
   });
 });
 
