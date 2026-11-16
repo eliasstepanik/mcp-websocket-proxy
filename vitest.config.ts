@@ -7,8 +7,9 @@ export default defineConfig({
     // Child processes + SSE streams need more headroom than the 5s default.
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    // The suite spawns stdio children and binds sockets; keep files isolated and serial.
+    // The suite spawns stdio children and binds sockets: run files serially.
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    maxWorkers: 1,
+    fileParallelism: false,
   },
 });
