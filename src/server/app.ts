@@ -274,12 +274,27 @@ export function createApp(options: AppOptions): App {
       socket.destroy();
       return;
     }
-    // T3 adds authentication here; every `/tunnel` upgrade is accepted for now.
+    // Authenticate the *upgrade request* before the protocol is handed to `ws`: a
+    // rejected client gets a plain 401 (no WebSocket handshake at all), which the
+    // client library surfaces as a failed handshake.
+    if (!verifyBearer(req.headers.authorization, clientToken)) {
+      socket.write(
+        'HTTP/1.1 401 Unauthorized\r\n' +
+          'www-authenticate: Bearer\r\n' +
+          'content-type: text/plain; charset=utf-8\r\n' +
+          'connection: close\r\n' +
+          'content-length: 21\r\n' +
+          '\r\n' +
+          'Unauthorized: token\r\n',
+      );
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(req, socket, head, (ws) => {
       const handler = new TunnelHandler(ws, registry, {
         ...(options.heartbeatIntervalMs !== undefined ? { heartbeatIntervalMs: options.heartbeatIntervalMs } : {}),
         ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {}),
-        ...(options.serverVersion !== undefined ? { serverVersion: options.serverVersion } : {}),
+        serverVersion,
       });
       tunnelsBySocket.set(ws, handler);
       ws.on('close', () => {
