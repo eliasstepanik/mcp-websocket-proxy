@@ -56,11 +56,10 @@ async function startStack(): Promise<void> {
   await local.start();
 
   handler = createMcpEndpointHandler({ name: 'fake', upstream: local });
-  httpServer = createServer((req, res) => {
-    void handler.handle(req, res);
-  });
-  await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
-  const address = httpServer.address();
+  const server = createServer((req, res) => void handler!.handle(req, res));
+  httpServer = server;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('failed to bind test server');
   baseUrl = `http://127.0.0.1:${address.port}/mcp/fake`;
 }
