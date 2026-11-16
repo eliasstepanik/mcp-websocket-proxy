@@ -17,7 +17,9 @@
 # over the shared `clustermanager_caddy` network and terminates TLS. Nothing on
 # the host listens on 8080.
 
-name: McpWebsocketProxy
+# Compose project name: lowercase only (Compose rejects uppercase here). The
+# service and container names below keep the `McpWebsocketProxy` spelling.
+name: mcp-websocket-proxy
 
 services:
   McpWebsocketProxy:
