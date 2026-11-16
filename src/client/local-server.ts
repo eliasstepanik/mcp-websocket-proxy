@@ -129,6 +129,8 @@ export class LocalMcpServer implements Upstream {
     // `running` or `backoff` would spawn a second child next to the live one.
     if (this.state !== 'stopped' && this.state !== 'failed') return;
     this.stopping = false;
+    // An explicit start is a fresh slate for the backoff schedule.
+    this.restartAttempt = 0;
     await this.spawn();
   }
 
