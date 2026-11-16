@@ -99,9 +99,14 @@ export function createLogger(log: ClientLogConfig, secrets: readonly string[] = 
         if (existsSync(from)) renameSync(from, to);
       } catch {
         /* rotation is best-effort */
+        rotated = false;
       }
     }
-    fileSize = 0;
+    // Only a rotation that renamed everything has a *known* size: when a rename
+    // failed the file we are still appending to is the one that was already there,
+    // so its real size is unknown. `undefined` makes the next write re-stat it
+    // instead of under-counting from 0 and never rotating again.
+    fileSize = rotated ? 0 : undefined;
   };
 
   return (record: LogRecord): void => {
