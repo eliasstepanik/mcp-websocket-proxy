@@ -229,11 +229,11 @@ export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
     });
   });
 
-  if ([...servers.values()].every((server) => !server.available)) {
-    for (const server of servers.values()) await server.stop();
-    throw new Error('no local server could be started: check the `command` of every entry under `servers`');
-  }
-
+  // Every child that failed its first start stays in the map: its supervisor keeps
+  // retrying with backoff, and the tunnel advertises each one as soon as it comes
+  // up. Starting the tunnel even when nothing is up yet is what makes a PC whose
+  // commands are briefly unavailable (a VPN not up yet, a cache still warming)
+  // recover on its own instead of exiting.
   const tunnel = new TunnelClient({
     url: config.server.url,
     token: config.server.token,
