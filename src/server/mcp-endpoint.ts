@@ -62,13 +62,16 @@ export interface McpEndpointSession {
 export async function createEndpointSession(upstream: Upstream, options: McpEndpointSessionOptions = {}): Promise<McpEndpointSession> {
   const info = upstream.info;
 
+  // `instructions` belongs to the *options*, not to `serverInfo`: the SDK copies
+  // `options.instructions` into the top-level `instructions` field of the
+  // `initialize` result, while anything put in the first argument is relayed inside
+  // `serverInfo` (where Warren's client never looks for it).
   const server = new Server(
+    { name: info.serverInfo.name, version: info.serverInfo.version },
     {
-      name: info.serverInfo.name,
-      version: info.serverInfo.version,
+      capabilities: info.capabilities,
       ...(info.instructions !== undefined ? { instructions: info.instructions } : {}),
     },
-    { capabilities: info.capabilities },
   );
 
   // The SDK's `Server` answers `logging/setLevel` itself when the `logging`
