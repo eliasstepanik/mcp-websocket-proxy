@@ -35,7 +35,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 10_0
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (predicate()) return;
-    if (Date.now() > deadline) throw new Promise((_, reject) => reject(new Error(`timed out waiting for ${label}`)));
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
     await sleep(20);
   }
 }
