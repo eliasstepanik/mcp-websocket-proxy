@@ -22,7 +22,7 @@ jobs:
       # a plain `ubuntu-latest` runner handles that fine.
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: "24"
           cache: npm
 
       # `package-lock.json` is committed, so `npm ci` is the only install path.
