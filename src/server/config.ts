@@ -16,8 +16,6 @@
  * problem, never the value.
  */
 
-/** Shortest token accepted: below this a secret is brute-forceable, so refuse it. */
-export const MIN_TOKEN_LENGTH = 32;
 /** Console verbosity, most verbose first. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
