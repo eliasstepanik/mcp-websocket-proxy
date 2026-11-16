@@ -227,6 +227,12 @@ export class LocalMcpServer implements Upstream {
 
     const client = new Client({ name: 'mcp-websocket-proxy-client', version: '0.1.0' });
 
+    // One stderr sink per spawn: the pid in the prefix and the partial-line buffer
+    // belong to *this* child, so a dead child's late/partial output can neither be
+    // attributed to the next child nor glue onto its first line.
+    const stderrSink: StderrSink = { transport, buffer: '' };
+    this.stderrSink = stderrSink;
+
     // Remember the in-flight pair so `stop()` can close it (and so a later `stop()`
     // is recognisable here via the identity check after the handshake).
     const pending = { client, transport };
