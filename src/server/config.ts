@@ -18,6 +18,8 @@
 
 import { MIN_TOKEN_LENGTH } from './auth.js';
 
+export { MIN_TOKEN_LENGTH };
+
 /** Console verbosity, most verbose first. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
