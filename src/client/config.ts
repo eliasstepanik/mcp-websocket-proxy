@@ -412,19 +412,23 @@ export function checkConfigText(text: string, env: NodeJS.ProcessEnv = process.e
   try {
     document = parseYaml(text);
   } catch (error) {
-    return { ok: false, errors: [`config is not valid YAML or JSON: ${(error as Error).message}`] };
+    return { ok: false, errors: [`config is not valid YAML or JSON: ${yamlErrorLine(error)}`] };
   }
   if (document === null || document === undefined) return { ok: false, errors: ['config file is empty'] };
   if (!isRecord(document)) return { ok: false, errors: ['config must be a map of settings'] };
 
   const errors: string[] = [];
+  // `document` is kept as the *pre-expansion* document: error messages quote this
+  // text, never the expanded one, so a value pulled in through `${env:VAR}` can
+  // never be echoed.
+  const raw = document;
   const expanded = expandValue(document, env, errors, '') as Record<string, unknown>;
 
-  const server = parseServerSection(expanded, errors);
+  const server = parseServerSection(expanded, errors, raw);
   const rawClientId = readString(expanded, 'clientId', '', errors);
   const clientId = rawClientId?.trim() ? rawClientId.trim() : hostname();
-  const log = parseLogSection(expanded, errors);
-  const filesystem = parseFilesystemSection(expanded, errors);
+  const log = parseLogSection(expanded, errors, raw);
+  const filesystem = parseFilesystemSection(expanded, errors, raw);
   const servers = parseServersSection(expanded, errors);
 
   if (filesystem.enabled && servers.has(normalizeServerName(filesystem.name))) {
