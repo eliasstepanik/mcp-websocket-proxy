@@ -145,6 +145,17 @@ servers:
     expect(checkConfigText('- just\n- a\n- list\n', baseEnv()).errors).toContain('config must be a map of settings');
     expect(checkConfigText('{ not yaml: [', baseEnv()).errors[0]).toContain('not valid YAML or JSON');
   });
+
+  it('does not echo the library source excerpt of a broken line', () => {
+    // The yaml library appends the offending source line (and a caret) to its
+    // message; a literal secret sitting on that line must not be printed.
+    const check = checkConfigText(`server:\n  url: "unclosed ${SECRET}\n  token: x\n`, baseEnv());
+    expect(check.ok).toBe(false);
+    expect(check.errors[0]).toContain('not valid YAML or JSON');
+    expect(check.errors.join('\n')).not.toContain(SECRET);
+    // The actionable part (the problem and its position) is kept.
+    expect(check.errors[0]).toMatch(/line \d+, column \d+/);
+  });
 });
 
 describe('${env:VAR} expansion', () => {
