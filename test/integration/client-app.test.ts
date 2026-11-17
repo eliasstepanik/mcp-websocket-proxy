@@ -168,7 +168,7 @@ function runCliUntilMarker(args: string[], marker: string, signal: NodeJS.Signal
     let signalled = false;
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`timed out waiting for ${JSON.stringify(marker)}; stderr was:\n${stderr}`);
+      reject(new Error(`timed out waiting for ${JSON.stringify(marker)}; stderr was:\n${stderr}`));
     }, 60_000);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
