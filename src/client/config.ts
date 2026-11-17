@@ -308,8 +308,11 @@ function validateUrl(url: string, allowInsecure: boolean, errors: string[], disp
     return;
   }
   if (parsed.protocol === 'ws:' && !allowInsecure && !LOCAL_HOSTS.has(parsed.hostname)) {
+    // The host is only named when it was literally in the file: if the URL came
+    // from `${env:...}` the expanded host is a value and stays unprinted.
+    const host = display === undefined || display === url ? parsed.hostname : shown;
     errors.push(
-      `server.url uses unencrypted ws:// for host ${JSON.stringify(parsed.hostname)}: use wss://, or set ` +
+      `server.url uses unencrypted ws:// for host ${JSON.stringify(host)}: use wss://, or set ` +
         'server.allowInsecure: true only on a network you trust',
     );
   }
