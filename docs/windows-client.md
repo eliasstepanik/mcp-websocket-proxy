@@ -87,18 +87,31 @@ That registers `McpWebsocketProxyClient` for the current user:
   indefinitely — with "do not start a new instance" that repeat is a watchdog:
   every tick is a no-op while the agent runs and a restart when it does not;
 - **action** `node <RepoRoot>\dist\client\main.js --config <ConfigPath>`;
-- **hidden** in the Task Scheduler UI (with `S4U` no console window appears at
-  all; see Troubleshooting for the `Interactive` fallback);
+- **hidden** in the Task Scheduler UI (with the default `Interactive` logon type a
+  console window appears for the duration of the run; see Troubleshooting);
 - **restart on failure**: 3 attempts, 1 minute apart;
 - **no execution time limit** — Task Scheduler never kills a healthy agent;
 - **"do not start a new instance if one is running"**, so a second logon cannot
   double-start it.
 
-By default the task is registered with logon type `S4U` ("run whether the user is
-logged on or not", no stored password), which is what makes it survive a logoff.
-If your machine policy denies that, the script says so and retries with
-`-LogonType Interactive`; the task then stops at logoff and comes back at the
-next logon.
+By default the task is registered with logon type `Interactive` and run level
+`Limited`: it runs as you, only while you are logged on, with normal user
+privileges — **no administrator rights are needed**, so run the script from an
+ordinary, non-elevated PowerShell. The task lives and dies with your desktop
+session: it stops at logoff and the At-log-on trigger brings it back at the next
+logon.
+
+To keep the agent running after a logoff, register it with logon type `S4U`
+("run whether the user is logged on or not", no stored password):
+
+```powershell
+.\scripts\install-task.ps1 -RunWhetherUserLoggedIn -Force
+```
+
+`S4U` can only be registered from an elevated (Administrator) PowerShell, so
+**that switch is the only thing here that needs elevation**. From a non-elevated
+prompt the script stops with access denied (`0x80070005`) and says so; drop the
+switch to get the elevation-free `Interactive` task instead.
 
 Useful parameters:
 
@@ -110,7 +123,9 @@ Useful parameters:
 ```
 
 `install-task.ps1` runs `--check` on the config first and refuses to register a
-file that does not validate. Remove the task again with:
+file that does not validate. It also verifies the task really exists before it
+prints the `registered '...'` summary, so a failed registration is reported as
+an error instead of a success. Remove the task again with:
 
 ```powershell
 .\scripts\uninstall-task.ps1
@@ -138,10 +153,14 @@ Run through this once after installing, and again after any change to the config
    `command: npx` (e.g. `@modelcontextprotocol/server-memory`), then from the
    Warren side call one of its tools. On the PC, `tasklist /FI "IMAGENAME eq node.exe" /V`
    shows the `npx` child (and the `node.exe` it launched) while the agent runs.
-4. **It survives logoff/logon.** Log off, log back in, then
+4. **It comes back after logoff/logon.** With the default `Interactive` task the
+   session always ends at logoff, so the agent always stops and restarts at the
+   next logon: log off, log back in, then
    `tasklist /FI "IMAGENAME eq node.exe"` — the agent (and its children) are
-   running again, exactly one copy, and the log shows a fresh `starting` line
-   only if the session actually ended.
+   running again, exactly one copy, and the log shows a fresh `starting` line.
+   Only with `-RunWhetherUserLoggedIn` (`S4U`) does the agent survive the logoff
+   itself; there the log gets no new `starting` line because the process was
+   never stopped.
 5. **No orphan `node.exe` after a stop.** Note the pids from step 3, then
    `Stop-ScheduledTask -TaskName McpWebsocketProxyClient` and re-check:
 
@@ -208,6 +227,13 @@ Should not happen (the task ignores a second start). If it does — e.g. a
 foreground run next to the task — stop one: the tunnel accepts both, but each
 `npx` child is started twice and the servers appear twice on `GET /status`.
 
+**`Register-ScheduledTask : Zugriff verweigert` / `Access denied` (`0x80070005`)**
+You passed `-RunWhetherUserLoggedIn` (or `-LogonType S4U`) from a non-elevated
+prompt. `S4U` can only be registered from an elevated (Administrator)
+PowerShell. Either run the script from an elevated (Administrator) PowerShell,
+or drop the switch and register the default `Interactive` task, which needs no
+elevation.
+
 **The task registered with `S4U` but never runs (`LastTaskResult: 0x80070569`)**
 `0x80070569` is `LOGON_FAILURE`: registration succeeded, but the account lacks
 the "Log on as a batch job" user right, so the run-time logon fails. Group
@@ -215,7 +241,7 @@ policy on a work PC usually grants it or withholds it, and it is not something a
 non-elevated prompt can change. Re-register on the interactive session:
 
 ```powershell
-.\scripts\install-task.ps1 -LogonType Interactive -Force
+.\scripts\install-task.ps1 -Force
 ```
 
 The task then lives and dies with your desktop session: it stops at logoff and
@@ -227,13 +253,13 @@ locally only. A `filesystem.roots` entry (or a server's working directory) on
 `smb://server/share` or a mapped drive letter therefore fails with a permission
 or "path not found" error, even though the same path works in your shell —
 mapped drive letters in particular are per-session and do not exist in the task's
-session. Keep roots on local paths, or run with `-LogonType Interactive -Force`
-(or `-LogonType Password` with `-Credential`) when a share must be reached.
+session. Keep roots on local paths, or run with the default `Interactive` logon
+type (or `-LogonType Password` with `-Credential`) when a share must be reached.
 
 **A console window appears when the task runs**
-That means the task is registered as `Interactive` (the fallback, or something
-you asked for). `-Hidden` only hides the task in the Task Scheduler UI, not a
-window: an interactive task shows a console for the whole run. Under `S4U` the
+That is the default: the task is registered as `Interactive`, and `-Hidden` only
+hides the task in the Task Scheduler UI, not a window — an interactive task shows
+a console for the whole run. Under `S4U` (`-RunWhetherUserLoggedIn`, elevated) the
 task runs in its own session and no window ever appears. To keep the window off
 screen in the interactive case, register the action as
 `conhost.exe --headless node.exe …` (Windows 11 22H2+), or accept the window —

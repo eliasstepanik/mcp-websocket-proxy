@@ -15,13 +15,19 @@
                  minute apart, no execution time limit (the agent is meant to
                  run forever)
 
-    By default the task is registered with LogonType S4U ("run whether the user
-    is logged on or not", no stored password): it then runs in its own session,
-    so logging off does not kill it and logging back on does not start a second
-    copy. S4U needs the "Replace a process level token" right; if registration
-    fails because of that, re-run with -LogonType Interactive (the task then
-    lives and dies with the desktop session, and the At log on trigger brings it
-    back at the next logon).
+    By default the task is registered with LogonType Interactive and RunLevel
+    Limited: it runs as you, only while you are logged on, with normal user
+    privileges, so no administrator rights are needed - an ordinary,
+    non-elevated PowerShell is enough. The task then lives and dies with the
+    desktop session, and the At log on trigger brings it back at the next logon.
+
+    Pass -RunWhetherUserLoggedIn to register with LogonType S4U instead ("run
+    whether the user is logged on or not", no stored password): the task then
+    runs in its own session, so logging off does not kill it and logging back on
+    does not start a second copy. S4U can only be registered from an elevated
+    (Administrator) PowerShell, so that switch needs elevation. Without it
+    registration fails with "Access denied" (0x80070005); drop the switch to get
+    the default Interactive task.
 
     Run this once, from an ordinary (non-elevated) PowerShell:
 
@@ -53,8 +59,16 @@
     Task Scheduler task name. Default: McpWebsocketProxyClient.
 
 .PARAMETER LogonType
-    S4U (default, survives logoff), Interactive (tied to the desktop session)
-    or Password (requires -Credential).
+    Interactive (default: tied to the desktop session, needs no elevation), S4U
+    (survives logoff, needs an elevated shell) or Password (requires
+    -Credential). -RunWhetherUserLoggedIn is a shortcut for S4U.
+
+.PARAMETER RunWhetherUserLoggedIn
+    Register with LogonType S4U ("run whether the user is logged on or not", no
+    stored password), so the task survives a logoff. S4U can only be registered
+    from an elevated (Administrator) PowerShell; from a non-elevated prompt
+    registration fails with access denied (0x80070005). Optional - the default
+    Interactive task needs no elevation.
 
 .PARAMETER Credential
     Required with -LogonType Password: the user account Task Scheduler runs as.
@@ -70,7 +84,8 @@ param(
     [string] $ConfigPath = '',
     [string] $TaskName = 'McpWebsocketProxyClient',
     [ValidateSet('S4U', 'Interactive', 'Password')]
-    [string] $LogonType = 'S4U',
+    [string] $LogonType = 'Interactive',
+    [switch] $RunWhetherUserLoggedIn,
     [pscredential] $Credential,
     [switch] $Force
 )
@@ -114,7 +129,7 @@ $ConfigPath = [string] $ConfigPath
 
 $Entry = [string] (Join-Path $RepoRoot 'dist\client\main.js')
 if (-not (Test-Path -LiteralPath $Entry)) {
-    throw "cannot find $Entry - run `npm ci` and `npm run build` in $RepoRoot first."
+    throw "cannot find $Entry - run 'npm ci' and 'npm run build' in $RepoRoot first."
 }
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
     Write-Warning "config file not found: $ConfigPath (copy config.example.yaml there, then start the task)"
@@ -153,11 +168,11 @@ $RepeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
 $Trigger = @($AtLogOnTrigger, $RepeatTrigger)
 
 # -Hidden hides the task in the Task Scheduler UI; it does not hide a console
-# window. With LogonType S4U the task runs in its own session so no window ever
-# appears. With the -LogonType Interactive fallback a console window does show
-# for the duration of the run; to keep that one off screen, run the action as
+# window. With the default LogonType Interactive a console window does show for
+# the duration of the run; to keep that one off screen, run the action as
 #   conhost.exe --headless node.exe <Entry> --config <ConfigPath>
-# (Windows 11 22H2 and newer) instead of node.exe directly.
+# (Windows 11 22H2 and newer) instead of node.exe directly. With -RunWhetherUserLoggedIn
+# (LogonType S4U) the task runs in its own session so no window ever appears.
 # RestartCount/RestartInterval: the crash policy.
 # MultipleInstances IgnoreNew: "do not start a new instance if one is already
 # running".
@@ -171,6 +186,16 @@ $Settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
     -MultipleInstances IgnoreNew
 
+if ($RunWhetherUserLoggedIn -and $PSBoundParameters.ContainsKey('LogonType') -and $LogonType -ne 'S4U') {
+    throw "-RunWhetherUserLoggedIn means LogonType S4U; it cannot be combined with -LogonType $LogonType."
+}
+
+if ($RunWhetherUserLoggedIn) {
+    # Opt-in: S4U ("run whether the user is logged on or not"). Can only be
+    # registered from an elevated (Administrator) PowerShell.
+    $LogonType = 'S4U'
+}
+
 if ($LogonType -eq 'Password') {
     if (-not $Credential) {
         throw '-LogonType Password needs -Credential.'
@@ -180,10 +205,6 @@ if ($LogonType -eq 'Password') {
 } else {
     $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
 }
-
-# The logon type the task actually ends up registered with; S4U falls back to
-# Interactive below when registration is refused.
-$EffectiveLogonType = $LogonType
 
 $Description = 'MCP WebSocket Proxy client: exposes this PC''s local MCP servers to Warren over an outbound tunnel.'
 
@@ -200,22 +221,29 @@ if ($Force) {
     $common['Force'] = $true
 }
 
+# -ErrorAction Stop so a failed registration becomes a terminating error even if
+# the caller relaxed $ErrorActionPreference; nothing below may run on failure.
 try {
     if ($LogonType -eq 'Password') {
-        $task = Register-ScheduledTask @common -User $UserId -Password $Credential.GetNetworkCredential().Password
+        $task = Register-ScheduledTask @common -User $UserId -Password $Credential.GetNetworkCredential().Password -ErrorAction Stop
     } else {
-        $task = Register-ScheduledTask @common -Principal $Principal
+        $task = Register-ScheduledTask @common -Principal $Principal -ErrorAction Stop
     }
 } catch {
-    if ($LogonType -ne 'S4U') {
-        throw
+    if ($LogonType -eq 'S4U') {
+        throw "registering '$TaskName' with LogonType S4U failed: $($_.Exception.Message)`nS4U ('run whether the user is logged on or not') can only be registered from an elevated (Administrator) PowerShell. Drop -RunWhetherUserLoggedIn (or pass -LogonType Interactive) to register the task as Interactive instead - that needs no elevation; the task then stops at logoff and the At log on trigger starts it again at the next logon."
     }
-    Write-Warning "S4U registration failed ($($_.Exception.Message)); retrying with -LogonType Interactive."
-    Write-Warning 'The task will then stop at logoff and start again at the next logon.'
-    $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited
-    $EffectiveLogonType = 'Interactive'
-    $task = Register-ScheduledTask @common -Principal $Principal
+    throw "registering '$TaskName' failed: $($_.Exception.Message)"
 }
+
+# Never report success on a task that is not there.
+$task = Get-ScheduledTask -TaskPath '\' -TaskName $TaskName -ErrorAction SilentlyContinue
+if (-not $task) {
+    throw "Register-ScheduledTask returned but 'Get-ScheduledTask -TaskName $TaskName' finds nothing; the task was not registered."
+}
+
+# The logon type the task was actually registered with, read back from the task.
+$EffectiveLogonType = [string] $task.Principal.LogonType
 
 Write-Host "registered '$TaskName'"
 Write-Host "  run:      $($Action.Execute) $ArgumentString"
