@@ -28,6 +28,7 @@ import { pathToFileURL } from 'node:url';
 
 import { startClientApp, type ClientApp } from './app.js';
 import { ConfigError, checkConfig, loadClientConfig } from './config.js';
+import { filesystemServerPath } from './filesystem.js';
 
 export interface ClientCliOptions {
   /** Path of the YAML/JSON config file. */
