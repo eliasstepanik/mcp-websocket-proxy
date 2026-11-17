@@ -150,16 +150,20 @@ function runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): { status: num
 }
 
 /**
- * Runs the CLI as a live subprocess, sends `signal` once `marker` appears on its
+ * Runs the client as a live subprocess, sends `signal` once `marker` appears on its
  * stderr, and resolves with the exit code and the output.
  *
  * The `starting` line is written *inside* `startClientApp`, before the children
  * have finished spawning, so a signal sent at that moment arrives while startup
  * is still in progress.
+ *
+ * Node is started directly (`--import tsx`) rather than through `npx tsx`: the
+ * signal must reach the agent process itself, and an `npx` wrapper in between
+ * would swallow it.
  */
 function runCliUntilMarker(args: string[], marker: string, signal: NodeJS.Signals): Promise<{ status: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('npx', ['tsx', 'src/client/main.ts', ...args], {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/client/main.ts', ...args], {
       cwd: REPO_ROOT,
       env: { ...process.env, [TOKEN_ENV]: CLIENT_TOKEN },
       stdio: ['ignore', 'ignore', 'pipe'],
