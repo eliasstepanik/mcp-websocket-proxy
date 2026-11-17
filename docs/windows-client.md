@@ -132,7 +132,7 @@ Run through this once after installing, and again after any change to the config
    `{"level":"info","message":"starting",...}` and no `error` line; Warren's
    `GET /status` lists this `clientId` with the servers from the config.
 3. **An `npx` server really starts.** Configure a `servers:` entry with
-   `command: npx` (e.g. `@modelcontextprotocol/server-time`), then from the
+   `command: npx` (e.g. `@modelcontextprotocol/server-memory`), then from the
    Warren side call one of its tools. On the PC, `tasklist /FI "IMAGENAME eq node.exe" /V`
    shows the `npx` child (and the `node.exe` it launched) while the agent runs.
 4. **It survives logoff/logon.** Log off, log back in, then
