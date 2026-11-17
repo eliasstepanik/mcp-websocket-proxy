@@ -338,6 +338,16 @@ describe('main.ts --check', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('exits 0 for a file with the filesystem server enabled, resolving its bin', () => {
+    // The install task's gate: `--check` must run the same filesystem bin
+    // resolution the agent does, so a half-installed package fails here instead
+    // of at the first start. With the package intact this stays `config ok`.
+    const path = writeConfig(configYaml(fixtureEntry('alpha')).replace('filesystem: { enabled: false }', `filesystem: { enabled: true, roots: [${JSON.stringify(dir)}] }`));
+    const result = runCli(['--config', path, '--check'], { [TOKEN_ENV]: CLIENT_TOKEN });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe('config ok');
+  });
+
   it('exits 1 and names the missing environment variable', () => {
     const path = writeConfig(
       configYaml(`${fixtureEntry('alpha')}    env:\n      API_KEY: \${env:${MISSING_ENV}}\n`),
