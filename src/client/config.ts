@@ -15,6 +15,7 @@
  * filesystem: { enabled: true, roots: ['C:\Users\me\Projects'] }
  * servers:
  *   some-server: { command: npx, args: ['-y', 'some-mcp-server'], env: { API_KEY: '${env:SOME_KEY}' } }
+ *   some-http-server: { url: 'http://127.0.0.1:12306/mcp', headers: { Authorization: 'Bearer ${env:KEY}' } }
  * ```
  *
  * The rules are enforced here, at startup, so a bad file fails loudly instead of
@@ -33,6 +34,10 @@
  * - Server names must match {@link SERVER_NAME_RE}. Names are compared after
  *   {@link normalizeServerName}, so `Files` and `files` collide, and so does any
  *   name that collides with `filesystem.name`.
+ * - A server entry has exactly one of `command` (a stdio child) or `url` (a
+ *   Streamable HTTP server already running on this machine). `url` must be
+ *   `http://` or `https://`; plain `http://` is refused for a non-local host
+ *   unless the entry sets `allowInsecure: true`.
  * - There must be at least one server to expose: `servers` may be empty only
  *   when the filesystem server is enabled.
  *
@@ -75,11 +80,16 @@ export class ConfigError extends Error {
   }
 }
 
-/** One local stdio MCP server, as it will be handed to `LocalMcpServer`. */
+/** One local MCP server (stdio child or HTTP endpoint), as it will be handed to `LocalMcpServer`. */
 export interface ClientServerConfig {
   /** Tunnel name (validated against {@link SERVER_NAME_RE}). */
   name: string;
+  /** Stdio child command; empty for a {@link url} server. */
   command: string;
+  /** Streamable HTTP endpoint; set instead of {@link command}. */
+  url?: string | undefined;
+  /** HTTP headers sent to {@link url} (already `${env:...}`-expanded). */
+  headers?: Record<string, string> | undefined;
   args: string[];
   /** Already `${env:...}`-expanded environment for the child. */
   env: Record<string, string>;
@@ -318,6 +328,29 @@ function validateUrl(url: string, allowInsecure: boolean, errors: string[], disp
   }
 }
 
+/** A `url` server: http(s) only, and plain http only for a local host unless allowed. */
+function validateHttpUrl(url: string, allowInsecure: boolean, where: string, errors: string[], display?: string): void {
+  const shown = display ?? url;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    errors.push(`${where}.url is not a valid URL: ${JSON.stringify(shown)}`);
+    return;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    errors.push(`${where}.url must start with http:// or https://, got ${JSON.stringify(shown)}`);
+    return;
+  }
+  if (parsed.protocol === 'http:' && !allowInsecure && !LOCAL_HOSTS.has(parsed.hostname)) {
+    const host = display === undefined || display === url ? parsed.hostname : shown;
+    errors.push(
+      `${where}.url uses unencrypted http:// for host ${JSON.stringify(host)}: use https://, or set ` +
+        `${where}.allowInsecure: true only on a network you trust`,
+    );
+  }
+}
+
 function parseServerSection(root: Record<string, unknown>, errors: string[], rawRoot: Record<string, unknown>): ClientConfig['server'] {
   const section = readSection(root, 'server', errors);
   const url = readString(section, 'url', 'server', errors, { required: true }) ?? '';
@@ -365,7 +398,7 @@ function parseFilesystemSection(root: Record<string, unknown>, errors: string[],
   return { enabled, name, roots };
 }
 
-function parseServersSection(root: Record<string, unknown>, errors: string[]): Map<string, ClientServerConfig> {
+function parseServersSection(root: Record<string, unknown>, errors: string[], rawRoot: Record<string, unknown>): Map<string, ClientServerConfig> {
   const servers = new Map<string, ClientServerConfig>();
   const section = root['servers'];
   if (section !== undefined && section !== null && !isRecord(section)) {
@@ -375,7 +408,7 @@ function parseServersSection(root: Record<string, unknown>, errors: string[]): M
   for (const [key, value] of Object.entries(section ?? {})) {
     const where = `servers.${key}`;
     if (!isRecord(value)) {
-      errors.push(`${where} must be a map with at least a \`command\``);
+      errors.push(`${where} must be a map with a \`command\` or a \`url\``);
       continue;
     }
     const name = normalizeServerName(key);
@@ -389,6 +422,27 @@ function parseServersSection(root: Record<string, unknown>, errors: string[]): M
     }
     if (servers.has(name)) {
       errors.push(`duplicate server name ${JSON.stringify(name)}: names must be unique after trimming and lowercasing`);
+      continue;
+    }
+    const hasUrl = value['url'] !== undefined && value['url'] !== null;
+    const hasCommand = value['command'] !== undefined && value['command'] !== null;
+    if (hasUrl && hasCommand) {
+      errors.push(`${where} must set either \`command\` or \`url\`, not both`);
+      continue;
+    }
+    if (hasUrl) {
+      const url = (readString(value, 'url', where, errors, { required: true }) ?? '').trim();
+      const allowInsecure = readBoolean(value, 'allowInsecure', where, errors, false);
+      if (url) validateHttpUrl(url, allowInsecure, where, errors, rawStringAt(rawRoot, 'servers', key, 'url'));
+      servers.set(name, {
+        name,
+        command: '',
+        url,
+        headers: readStringMap(value, 'headers', where, errors),
+        args: [],
+        env: {},
+        inheritEnv: false,
+      });
       continue;
     }
     const command = readString(value, 'command', where, errors, { required: true }) ?? '';
@@ -432,7 +486,7 @@ export function checkConfigText(text: string, env: NodeJS.ProcessEnv = process.e
   const clientId = rawClientId?.trim() ? rawClientId.trim() : hostname();
   const log = parseLogSection(expanded, errors, raw);
   const filesystem = parseFilesystemSection(expanded, errors, raw);
-  const servers = parseServersSection(expanded, errors);
+  const servers = parseServersSection(expanded, errors, raw);
 
   if (filesystem.enabled && servers.has(normalizeServerName(filesystem.name))) {
     errors.push(

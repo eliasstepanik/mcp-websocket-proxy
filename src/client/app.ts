@@ -149,7 +149,7 @@ function localOptions(entry: ClientServerConfig, log: ClientLogger): Constructor
   Object.assign(env, entry.env);
   return {
     name: entry.name,
-    command: entry.command,
+    ...(entry.url ? { url: entry.url, headers: entry.headers } : { command: entry.command }),
     args: entry.args,
     env,
     ...(entry.cwd !== undefined ? { cwd: entry.cwd } : {}),
@@ -174,7 +174,9 @@ function localOptions(entry: ClientServerConfig, log: ClientLogger): Constructor
  * and the tunnel comes up regardless, so the agent recovers by itself.
  */
 export async function startClientApp(config: ClientConfig): Promise<ClientApp> {
-  const log = createLogger(config.log, [config.server.token]);
+  // Header values (e.g. a bearer token for an HTTP server) are scrubbed like the tunnel token.
+  const headerSecrets = [...config.servers.values()].flatMap((entry) => Object.values(entry.headers ?? {}));
+  const log = createLogger(config.log, [config.server.token, ...headerSecrets]);
 
   const servers = new Map<string, LocalMcpServer>();
   for (const entry of config.servers.values()) {

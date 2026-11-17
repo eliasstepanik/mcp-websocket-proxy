@@ -21,6 +21,8 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   ErrorCode,
   isJSONRPCNotification,
@@ -39,7 +41,16 @@ export type LocalServerState = 'stopped' | 'starting' | 'running' | 'backoff' | 
 export interface LocalServerOptions {
   /** Server name; must match `^[a-z0-9][a-z0-9_-]{0,62}$`. */
   name: string;
-  command: string;
+  /** Child process to spawn (stdio). Exactly one of `command` and `url` must be set. */
+  command?: string | undefined;
+  /**
+   * Streamable HTTP endpoint of an MCP server that is already running on this
+   * machine (e.g. `http://127.0.0.1:12306/mcp`). No child is spawned; "restart"
+   * means reconnecting with the same backoff schedule.
+   */
+  url?: string | undefined;
+  /** Extra HTTP headers for `url` servers (e.g. `Authorization`). */
+  headers?: Record<string, string> | undefined;
   args?: string[] | undefined;
   env?: Record<string, string> | undefined;
   cwd?: string | undefined;
@@ -71,7 +82,7 @@ const MAX_STDERR_BUFFER_BYTES = 64 * 1024;
 
 /** Per-spawn stderr state: the pid must come from *this* transport, never from a later one. */
 interface StderrSink {
-  transport: StdioClientTransport;
+  transport: StdioClientTransport | undefined;
   /** The pid of this spawn, remembered as soon as it is known (a dead transport reports `null`). */
   pid: number | null;
   buffer: string;
@@ -82,13 +93,13 @@ export class LocalMcpServer implements Upstream {
 
   private readonly options: LocalServerOptions;
   private client: Client | undefined;
-  private transport: StdioClientTransport | undefined;
+  private transport: Transport | undefined;
   /**
    * The client/transport of a {@link spawn} that has not finished the `initialize`
    * handshake yet. Kept in a field so {@link stop} can close an in-flight child
    * instead of leaking it.
    */
-  private pending: { client: Client; transport: StdioClientTransport } | undefined;
+  private pending: { client: Client; transport: Transport } | undefined;
   private cachedInfo: UpstreamInfo | undefined;
   private state: LocalServerState = 'stopped';
   private restartAttempt = 0;
@@ -112,7 +123,7 @@ export class LocalMcpServer implements Upstream {
   }
 
   get pid(): number | null {
-    return this.transport?.pid ?? null;
+    return this.transport instanceof StdioClientTransport ? this.transport.pid : null;
   }
 
   get available(): boolean {
@@ -198,6 +209,13 @@ export class LocalMcpServer implements Upstream {
           timeoutMs: requestOptions.timeout,
         });
       }
+      // An HTTP server that went away (connection refused) or forgot our session
+      // (404) will not recover on its own: drop the connection so the supervisor
+      // reconnects with backoff, and report it as `server_down`.
+      if (this.options.url && this.client === client && isHttpConnectionLoss(error)) {
+        void client.close().catch(() => undefined);
+        throw proxyError('server_down', `server "${this.name}" at its HTTP endpoint is unreachable: ${(error as Error).message}`);
+      }
       throw toRelayableError(error);
     }
   }
@@ -234,14 +252,21 @@ export class LocalMcpServer implements Upstream {
   private async spawn(): Promise<void> {
     this.setState('starting');
 
-    const transport = new StdioClientTransport({
-      command: this.options.command,
-      ...(this.options.args ? { args: this.options.args } : {}),
-      // Merge, never replace: a configured `env` must not drop PATH/SYSTEMROOT etc.
-      env: { ...getDefaultEnvironment(), ...this.options.env },
-      ...(this.options.cwd ? { cwd: this.options.cwd } : {}),
-      stderr: 'pipe',
-    });
+    const transport: Transport = this.options.url
+      ? new StreamableHTTPClientTransport(new URL(this.options.url), {
+          ...(this.options.headers && Object.keys(this.options.headers).length > 0
+            ? { requestInit: { headers: this.options.headers } }
+            : {}),
+        })
+      : new StdioClientTransport({
+          command: this.options.command ?? '',
+          ...(this.options.args ? { args: this.options.args } : {}),
+          // Merge, never replace: a configured `env` must not drop PATH/SYSTEMROOT etc.
+          env: { ...getDefaultEnvironment(), ...this.options.env },
+          ...(this.options.cwd ? { cwd: this.options.cwd } : {}),
+          stderr: 'pipe',
+        });
+    const stdio = transport instanceof StdioClientTransport ? transport : undefined;
 
     const client = new Client({ name: 'mcp-websocket-proxy-client', version: '0.1.0' });
 
@@ -256,7 +281,7 @@ export class LocalMcpServer implements Upstream {
       previous.buffer = '';
       this.emitStderrLine(previous, dangling);
     }
-    const stderrSink: StderrSink = { transport, pid: null, buffer: '' };
+    const stderrSink: StderrSink = { transport: stdio, pid: null, buffer: '' };
     this.stderrSink = stderrSink;
 
     // Remember the in-flight pair so `stop()` can close it (and so a later `stop()`
@@ -264,7 +289,7 @@ export class LocalMcpServer implements Upstream {
     const pending = { client, transport };
     this.pending = pending;
 
-    transport.stderr?.on('data', (chunk: Buffer) => this.onStderr(stderrSink, chunk));
+    stdio?.stderr?.on('data', (chunk: Buffer) => this.onStderr(stderrSink, chunk));
 
     // Snapshot of the initialise result, captured off the wire so we can report the
     // protocol version the child actually negotiated.
@@ -379,7 +404,7 @@ export class LocalMcpServer implements Upstream {
     // The pid comes from this spawn's own transport, remembered as soon as it is
     // known: `this.transport` may already point at a newer child (startup lines) or
     // at nothing at all (late lines from a child that already exited).
-    sink.pid ??= sink.transport.pid;
+    sink.pid ??= sink.transport?.pid ?? null;
     sink.buffer += chunk.toString('utf8');
     const lines = sink.buffer.split('\n');
     sink.buffer = lines.pop() ?? '';
@@ -399,7 +424,7 @@ export class LocalMcpServer implements Upstream {
   private emitStderrLine(sink: StderrSink, line: string): void {
     // Always prefixed, so a child that writes its own `[name:pid=...]` header cannot
     // masquerade as another server.
-    const prefixed = `[${this.name}:pid=${sink.pid ?? sink.transport.pid ?? '?'}] ${line}`;
+    const prefixed = `[${this.name}:pid=${sink.pid ?? sink.transport?.pid ?? '?'}] ${line}`;
     if (this.options.onStderrLine) this.options.onStderrLine(prefixed);
     else process.stderr.write(`${prefixed}\n`);
   }
@@ -415,4 +440,12 @@ export class LocalMcpServer implements Upstream {
       }
     }
   }
+}
+
+/** Errors that mean an HTTP upstream is gone or has dropped our session. */
+function isHttpConnectionLoss(error: unknown): boolean {
+  if (error instanceof StreamableHTTPError) return error.code === 404;
+  if (error instanceof McpError) return false;
+  // `fetch` reports a refused/reset connection as a TypeError ("fetch failed").
+  return error instanceof TypeError;
 }

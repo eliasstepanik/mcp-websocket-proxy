@@ -83,3 +83,15 @@ servers:
       DATABASE_URL: ${env:DATABASE_URL}
     cwd: 'C:\work'
     inheritEnv: false
+
+  # An MCP server that is already running on this machine and speaks Streamable
+  # HTTP (e.g. a browser-extension bridge). Set `url` instead of `command`: no
+  # child is spawned; the client connects to it and, if it is not up yet or goes
+  # away, keeps reconnecting with backoff. Plain http:// is only accepted for
+  # localhost/127.0.0.1/::1 unless `allowInsecure: true`.
+  chrome-mcp-server:
+    url: http://127.0.0.1:12306/mcp
+    # Optional request headers; `${env:...}` is expanded and values are scrubbed
+    # from logs.
+    # headers:
+    #   Authorization: Bearer ${env:CHROME_MCP_TOKEN}

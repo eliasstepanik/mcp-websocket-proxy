@@ -372,7 +372,7 @@ describe('server entries', () => {
     expect(joined).toContain('servers.a.env must be a map of names to string values');
     expect(joined).toContain('servers.a.cwd must be a string');
     expect(joined).toContain('servers.a.inheritEnv must be true or false');
-    expect(joined).toContain('servers.b must be a map with at least a `command`');
+    expect(joined).toContain('servers.b must be a map with a `command` or a `url`');
   });
 
   it('reads inheritEnv and defaults it to false', () => {
@@ -397,5 +397,31 @@ describe('checkConfig', () => {
     expect(check.errors.join('\n')).toContain('unencrypted ws://');
     expect(check.errors.join('\n')).toContain('log.level must be one of');
     expect(check.errors.join('\n')).toContain('config exposes no servers');
+  });
+});
+
+describe('url servers', () => {
+  const env = { MCP_PROXY_CLIENT_TOKEN: TOKEN, HTTP_KEY: SECRET };
+
+  it('accepts a local http:// url with headers', () => {
+    const check = checkConfigText(
+      minimal({ servers: { 'chrome-mcp-server': { url: 'http://127.0.0.1:12306/mcp', headers: { Authorization: 'Bearer ${env:HTTP_KEY}' } } } }),
+      env,
+    );
+    expect(check.errors).toEqual([]);
+    const entry = check.config?.servers.get('chrome-mcp-server');
+    expect(entry?.url).toBe('http://127.0.0.1:12306/mcp');
+    expect(entry?.headers).toEqual({ Authorization: `Bearer ${SECRET}` });
+  });
+
+  it('refuses command and url together', () => {
+    const check = checkConfigText(minimal({ servers: { x: { command: 'node', url: 'http://localhost/mcp' } } }), env);
+    expect(check.errors.join('\n')).toMatch(/either `command` or `url`/);
+  });
+
+  it('refuses non-http schemes and remote plain http', () => {
+    expect(checkConfigText(minimal({ servers: { x: { url: 'ftp://localhost/mcp' } } }), env).errors.join('\n')).toMatch(/http:\/\/ or https:\/\//);
+    expect(checkConfigText(minimal({ servers: { x: { url: 'http://example.com/mcp' } } }), env).errors.join('\n')).toMatch(/unencrypted http/);
+    expect(checkConfigText(minimal({ servers: { x: { url: 'http://example.com/mcp', allowInsecure: true } } }), env).ok).toBe(true);
   });
 });
