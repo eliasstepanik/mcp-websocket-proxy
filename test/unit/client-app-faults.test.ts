@@ -138,11 +138,12 @@ describe('startClientApp fault tolerance', () => {
     filesystemMock.createFilesystemServer.mockImplementation(() => {
       throw new Error('the built-in filesystem server needs the package installed next to this file');
     });
-    const path = writeConfig(configText());
+    const path = writeConfig(configText(process.execPath, [FIXTURE]));
     const app = await startClientApp(loadClientConfig(path, { [TOKEN_ENV]: TOKEN }));
     try {
       expect(app.servers.has('filesystem')).toBe(false);
       expect(app.servers.has('alpha')).toBe(true);
+      expect(app.servers.get('alpha')?.available).toBe(true);
       expect(stderrLines.join('')).toContain('filesystem server could not be created');
     } finally {
       await app.close();
@@ -153,13 +154,14 @@ describe('startClientApp fault tolerance', () => {
     filesystemMock.createFilesystemServer.mockImplementation(() => {
       throw new Error('filesystem unavailable');
     });
-    const path = writeConfig(configText());
+    const path = writeConfig(configText(BROKEN_COMMAND, []));
     const app = await startClientApp(loadClientConfig(path, { [TOKEN_ENV]: TOKEN }));
     try {
       // Nothing is available, yet the agent is up: the supervisors retry and the
       // tunnel keeps dialing, so a PC that was merely slow recovers on its own.
       expect([...app.servers.values()].every((server) => !server.available)).toBe(true);
       expect(app.tunnel.state).not.toBe('stopped');
+      expect(stderrLines.join('')).toContain('local server failed to start');
     } finally {
       await app.close();
     }
