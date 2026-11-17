@@ -315,6 +315,20 @@ describe('startClientApp', () => {
 // the CLI
 // ---------------------------------------------------------------------------
 
+describe('main.ts signals', () => {
+  it('shuts down cleanly when SIGTERM arrives while startup is still running', async () => {
+    // `starting` is logged inside `startClientApp`, before the children have
+    // finished spawning: the signal therefore lands mid-startup, which is the
+    // case a plain `Ctrl+C` in a terminal hits. The handler must already be
+    // installed, and the agent must still close (exit 0, `closed` logged).
+    const path = writeConfig(configYaml(fixtureEntry('alpha')));
+    const result = await runCliUntilMarker(['--config', path], '"message":"starting"', 'SIGTERM');
+    expect(result.stderr).toContain('"message":"signal"');
+    expect(result.stderr).toContain('"message":"closed"');
+    expect(result.status).toBe(0);
+  });
+});
+
 describe('main.ts --check', () => {
   it('exits 0 and prints "config ok" for a valid file, without connecting', () => {
     const path = writeConfig(configYaml(fixtureEntry('alpha')));
