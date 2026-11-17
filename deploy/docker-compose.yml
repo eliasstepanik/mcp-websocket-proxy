@@ -1,0 +1,81 @@
+# Warren-side proxy, deployed as a Docker Compose stack.
+#
+# Expected layout on the host — the repository is checked out under `src/`, so
+# this file is `<stack>/src/deploy/docker-compose.yml` and `build: ..` below
+# resolves to the repository root:
+#
+#   /home/proxy/services/stacks/McpWebsocketProxy/
+#   └── src/                    <- the repository (git clone)
+#       ├── Dockerfile
+#       └── deploy/
+#           ├── docker-compose.yml   <- this file
+#           └── .env                 <- chmod 600, never committed
+#
+# Start it from `src/deploy/`:
+#
+#   docker compose --env-file .env up -d --build
+#
+# There are deliberately **no published host ports**: Caddy reaches the container
+# over the shared `clustermanager_caddy` network and terminates TLS. Nothing on
+# the host listens on 8080.
+
+# Compose project name: lowercase only (Compose rejects uppercase here). The
+# service and container names below keep the `McpWebsocketProxy` spelling.
+name: mcp-websocket-proxy
+
+services:
+  McpWebsocketProxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: mcp-websocket-proxy:local
+    container_name: McpWebsocketProxy
+    restart: unless-stopped
+
+    # Both tokens live in `deploy/.env` (see `.env.example`). `env_file` puts them
+    # in the container environment only — they are not baked into the image and
+    # not published as host ports or labels.
+    env_file:
+      - .env
+
+    # The proxy is a single Node process: it needs no capabilities at all. If a
+    # future feature ever needs one (e.g. binding a port < 1024), add it here
+    # rather than dropping `cap_drop`.
+    cap_drop:
+      - ALL
+    security_opt:
+      # A process cannot gain privileges (setuid, file capabilities) after exec.
+      - no-new-privileges:true
+    # The app never writes to its own filesystem; the only writable path is the
+    # tmpfs below (Node and npm use $TMPDIR for scratch files).
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # No `ports:` on purpose — see the header. Caddy discovers the container
+    # through the labels below.
+    networks:
+      - clustermanager_caddy
+
+    # caddy-docker-proxy labels. `mcp-proxy.example.com` is a placeholder:
+    # replace it with the hostname DNS points at your Caddy host, and make sure
+    # the work PC's `server.url` in its config.yaml is `wss://<that host>/tunnel`.
+    labels:
+      caddy_0: mcp-proxy.example.com
+      caddy_0.reverse_proxy: "{{upstreams 8080}}"
+      # -1 disables response buffering, which both the SSE stream on `/mcp/<name>`
+      # and the `/tunnel` WebSocket depend on: without it Caddy holds frames until
+      # its buffer fills and the tunnel looks alive but never answers.
+      caddy_0.reverse_proxy.flush_interval: "-1"
+      # DNS-01 challenge (the tunnel is reached from inside private networks, so
+      # an HTTP-01 challenge is not always available). `ionos` is the caddy-dns
+      # provider Caddy must be built with; `{env.IONOS_TOKEN}` is Caddy's env
+      # placeholder, resolved from *this container's* environment — so keep
+      # IONOS_TOKEN in the same `.env` file (env_file injects it here).
+      caddy_0.tls.dns: "ionos {env.IONOS_TOKEN}"
+
+networks:
+  # Created by the Caddy stack; `external` means this file only joins it.
+  # `docker network create clustermanager_caddy` if it does not exist yet.
+  clustermanager_caddy:
+    external: true

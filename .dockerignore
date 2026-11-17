@@ -1,0 +1,38 @@
+# The build context is the whole repo; everything below is either rebuilt in the
+# image, irrelevant to it, or must never be baked into a layer.
+
+# Reinstalled from package-lock.json inside the image.
+node_modules
+
+# Rebuilt by `npm run build` in the build stage.
+dist
+*.tsbuildinfo
+
+# Version control and CI/agent scratch space.
+.git
+.gitignore
+.github
+.warren
+
+# Not needed to build or run the server.
+test
+docs
+scripts
+config.example.yaml
+README.md
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Never copy secrets or logs into an image. The `**/` prefix matters: a bare
+# `.env` only matches the *root* of the build context, so `deploy/.env` would
+# still be sent to the daemon and could end up in a layer.
+**/.env
+**/.env.*
+**/*.log
+
+# Local tooling noise.
+.vscode
+.idea
+.DS_Store
+coverage

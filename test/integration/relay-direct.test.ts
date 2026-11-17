@@ -1,0 +1,562 @@
+/**
+ * T1 proof: an MCP Streamable HTTP endpoint (server side) can serve a generic relay
+ * to a local stdio MCP server (client side) using the MCP SDK on both ends, with no
+ * WebSocket layer in between.
+ *
+ * Topology under test (all in-process, one child process):
+ *
+ *   test (SDK Client + StreamableHTTPClientTransport)
+ *     -> node:http server -> createMcpEndpointHandler('/mcp/fake')
+ *       -> LocalMcpServer (SDK Client + StdioClientTransport)
+ *         -> test/fixtures/fake-mcp-server.mjs
+ */
+
+import { createServer, type Server as HttpServer } from 'node:http';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { McpError, ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+
+import { createMcpEndpointHandler, MAX_BODY_BYTES, type McpEndpointHandler } from '../../src/server/mcp-endpoint.js';
+import { LocalMcpServer } from '../../src/client/local-server.js';
+import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE, proxyError } from '../../src/shared/errors.js';
+import type { Upstream, UpstreamInfo } from '../../src/shared/upstream.js';
+
+const FIXTURE = new URL('../fixtures/fake-mcp-server.mjs', import.meta.url).pathname;
+
+let httpServer: HttpServer | undefined;
+let baseUrl = '';
+let handler: McpEndpointHandler | undefined;
+let local: LocalMcpServer | undefined;
+let stderrLines: string[] = [];
+let stateChanges: string[] = [];
+let startLogFile = '';
+let workDir = '';
+
+async function startStack(): Promise<void> {
+  stderrLines = [];
+  stateChanges = [];
+  startLogFile = join(workDir, `starts-${Date.now()}`);
+  writeFileSync(startLogFile, '');
+
+  local = new LocalMcpServer({
+    name: 'fake',
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { ...process.env, FIXTURE_START_LOG: startLogFile },
+    restartDelays: [250],
+    requestTimeoutMs: 20_000,
+    onStderrLine: (line) => stderrLines.push(line),
+    onStateChange: (state) => stateChanges.push(state),
+  });
+  await local.start();
+
+  handler = createMcpEndpointHandler({ name: 'fake', upstream: local });
+  const server = createServer((req, res) => void handler!.handle(req, res));
+  httpServer = server;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('failed to bind test server');
+  baseUrl = `http://127.0.0.1:${address.port}/mcp/fake`;
+}
+
+async function stopStack(): Promise<void> {
+  await handler?.close();
+  httpServer?.closeAllConnections?.();
+  await new Promise<void>((resolve) => (httpServer?.close(() => resolve()) ?? resolve()));
+  await local?.stop();
+}
+
+/** Connects a Warren-like client to the endpoint. */
+async function connectWarren(): Promise<{ client: Client; notifications: { method: string; params?: unknown }[] }> {
+  const notifications: { method: string; params?: unknown }[] = [];
+  const client = new Client({ name: 'warren-test', version: '1.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL(baseUrl));
+  transport.onmessage = (message) => {
+    const candidate = message as { method?: unknown };
+    if (typeof candidate.method === 'string' && 'method' in message && !('id' in message)) {
+      notifications.push({ method: candidate.method, params: (message as { params?: unknown }).params });
+    }
+  };
+  await client.connect(transport);
+  return { client, notifications };
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 10_000, label = 'condition'): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await predicate()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+/** Reads the fixture's own observable state through the proxied resource. */
+async function readFixtureState(client: Client): Promise<Record<string, unknown>> {
+  const result = await client.readResource({ uri: 'fixture://state' });
+  const first = result.contents[0];
+  if (!first || !('text' in first) || typeof first.text !== 'string') {
+    throw new Error('fixture://state did not return text');
+  }
+  return JSON.parse(first.text) as Record<string, unknown>;
+}
+
+beforeAll(() => {
+  workDir = mkdtempSync(join(tmpdir(), 'mcpwp-t1-'));
+});
+
+afterAll(() => {
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+beforeEach(async () => {
+  await startStack();
+});
+
+afterEach(async () => {
+  await stopStack();
+});
+
+describe('relay: Streamable HTTP endpoint -> local stdio server', () => {
+  it('answers initialize from cached upstream info', async () => {
+    const { client } = await connectWarren();
+    expect(client.getServerVersion()).toMatchObject({ name: 'fake-mcp-server', version: '1.2.3' });
+    expect(client.getInstructions()).toBe('Fixture server used by mcp-websocket-proxy tests.');
+    expect(client.getServerCapabilities()).toMatchObject({ tools: { listChanged: true }, resources: {}, prompts: {}, logging: {} });
+    await client.close();
+  });
+
+  it('relays tools, resources and prompts', async () => {
+    const { client } = await connectWarren();
+
+    const tools = await client.listTools();
+    expect(tools.tools.map((t) => t.name)).toEqual(['echo', 'slow', 'progress', 'mutate', 'crash']);
+
+    const call = await client.callTool({ name: 'echo', arguments: { text: 'hello' } });
+    expect(call.content).toEqual([{ type: 'text', text: 'echo:hello' }]);
+
+    const resources = await client.listResources();
+    expect(resources.resources.map((r) => r.uri)).toEqual(['fixture://state']);
+
+    const resource = await client.readResource({ uri: 'fixture://state' });
+    expect(resource.contents[0]).toMatchObject({ uri: 'fixture://state', mimeType: 'application/json' });
+
+    const prompts = await client.listPrompts();
+    expect(prompts.prompts.map((p) => p.name)).toEqual(['greet']);
+
+    const prompt = await client.getPrompt({ name: 'greet', arguments: { name: 'warren' } });
+    expect(prompt.messages).toEqual([{ role: 'user', content: { type: 'text', text: 'hello warren' } }]);
+
+    await client.close();
+  });
+
+  it('relays ping', async () => {
+    const { client } = await connectWarren();
+    await expect(client.ping()).resolves.toBeDefined();
+    await client.close();
+  });
+
+  it('forwards notifications/tools/list_changed after mutate', async () => {
+    const { client, notifications } = await connectWarren();
+    let listChanged = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+      listChanged += 1;
+    });
+
+    // Give the standalone GET SSE stream a moment to be established.
+    await client.listTools();
+
+    const mutated = await client.callTool({ name: 'mutate', arguments: {} });
+    expect(mutated.content).toEqual([{ type: 'text', text: 'mutate:added:extra_1' }]);
+
+    await waitFor(() => listChanged > 0, 10_000, 'tools/list_changed');
+    expect(notifications.some((n) => n.method === 'notifications/tools/list_changed')).toBe(true);
+
+    const tools = await client.listTools();
+    expect(tools.tools.map((t) => t.name)).toContain('extra_1');
+    await client.close();
+  });
+
+  it('relays progress notifications with the caller token', async () => {
+    const { client } = await connectWarren();
+    const progress: { progress: number; total?: number; message?: string }[] = [];
+    const result = await client.callTool(
+      { name: 'progress', arguments: { steps: 3 } },
+      undefined,
+      { onprogress: (p) => progress.push(p) },
+    );
+
+    expect(result.content).toEqual([{ type: 'text', text: 'progress:done:3' }]);
+    expect(progress.map((p) => p.progress)).toEqual([1, 2, 3]);
+    expect(progress[0]).toMatchObject({ total: 3, message: 'step 1/3' });
+    await client.close();
+  });
+
+  it('passes upstream JSON-RPC error codes through unchanged', async () => {
+    const { client } = await connectWarren();
+    const error = await client
+      .callTool({ name: 'echo', arguments: { text: '__error__' } })
+      .then(() => undefined)
+      .catch((e: unknown) => e as McpError);
+
+    expect(error).toBeInstanceOf(McpError);
+    expect(error?.code).toBe(-32100);
+    // The SDK's client always re-wraps a JSON-RPC error as `MCP error <code>: <message>`.
+    // The proxy itself must add no prefix of its own, so exactly one prefix is expected
+    // and the upstream message must survive verbatim behind it.
+    expect(error?.message).toBe('MCP error -32100: fixture refuses to echo');
+    expect(error?.message.match(/MCP error -32100: /g)).toHaveLength(1);
+    expect(error?.data).toEqual({ fixture: true });
+    await client.close();
+  });
+
+  it('delivers logging/setLevel to the fixture', async () => {
+    const { client } = await connectWarren();
+    await client.setLoggingLevel('warning');
+    const state = await readFixtureState(client);
+    expect(state.loggingLevel).toBe('warning');
+    await client.close();
+  });
+
+  it('propagates cancellation to the fixture', async () => {
+    const { client } = await connectWarren();
+    const controller = new AbortController();
+    const pending = client
+      .callTool({ name: 'slow', arguments: { ms: 5_000 } }, undefined, { signal: controller.signal })
+      .catch((e: unknown) => e);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    controller.abort('user cancelled');
+    await pending;
+
+    await waitFor(async () => (await readFixtureState(client)).lastCancellation !== null, 5_000, 'fixture to observe cancellation');
+    const state = await readFixtureState(client);
+    const cancellation = state.lastCancellation as { reason?: string } | null;
+    expect(cancellation).not.toBeNull();
+    expect(cancellation?.reason).toContain('user cancelled');
+    await client.close();
+  });
+
+  it('restarts the child after a crash and keeps serving', async () => {
+    const { client } = await connectWarren();
+    const crashed = await client.callTool({ name: 'crash', arguments: {} });
+    expect(crashed.content).toEqual([{ type: 'text', text: 'crash:bye' }]);
+
+    // The child exits ~25ms after answering `crash`, so the state may still read
+    // 'running' here: wait for the crash to be observed before asserting on it.
+    await waitFor(() => stateChanges.includes('backoff'), 10_000, 'backoff state');
+    await waitFor(() => local!.currentState === 'running', 10_000, 'child restart');
+    expect(stateChanges).toContain('backoff');
+    expect(readFileSync(startLogFile, 'utf8').trim().split('\n').length).toBeGreaterThanOrEqual(2);
+
+    const tools = await client.listTools();
+    expect(tools.tools.map((t) => t.name)).toContain('echo');
+    await client.close();
+  });
+
+  it('prefixes child stderr with the server name', async () => {
+    const { client } = await connectWarren();
+    await client.listTools();
+    await waitFor(() => stderrLines.length > 0, 5_000, 'stderr output');
+    expect(stderrLines.every((line) => line.startsWith('[fake:pid='))).toBe(true);
+    expect(stderrLines.some((line) => line.includes('fixture: started'))).toBe(true);
+    await client.close();
+  });
+
+  it('fails in-flight requests with a proxy error when the child dies', async () => {
+    const { client } = await connectWarren();
+    const pending = client.callTool({ name: 'slow', arguments: { ms: 5_000 } }).catch((e: unknown) => e as McpError);
+    await waitFor(() => local!.currentState === 'running');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await local!.stop();
+
+    const error = (await pending) as McpError;
+    expect(error).toBeInstanceOf(McpError);
+    expect(error.code).toBe(PROXY_ERROR_CODE);
+    expect((error.data as { source?: string; reason?: string }).source).toBe(PROXY_ERROR_SOURCE);
+    expect((error.data as { reason?: string }).reason).toBe('server_down');
+    await client.close();
+  });
+
+  it('answers 406 for a POST without the required Accept header', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+      }),
+    });
+    expect(response.status).toBe(406);
+    expect(handler!.sessionCount()).toBe(0);
+  });
+
+  it('rejects requests for an unknown session id with 404', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'mcp-session-id': 'nope',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    // 404 (not 400): the spec tells the client to re-initialize on 404.
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data?: unknown; source?: string };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('unknown Mcp-Session-Id');
+    // A protocol error carries no proxy payload of its own.
+    expect(body.error.data).toBeUndefined();
+    expect(body.error.source).toBeUndefined();
+  });
+
+  it('rejects a non-initialize POST without a session id with 400', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { code: number; message: string; data?: unknown } };
+    expect(body.error.code).toBe(-32000);
+    expect(body.error.message).toContain('missing Mcp-Session-Id');
+    expect(body.error.data).toBeUndefined();
+  });
+
+  it('rejects an unknown session id on GET and DELETE with 404', async () => {
+    for (const method of ['GET', 'DELETE'] as const) {
+      const response = await fetch(baseUrl, {
+        method,
+        headers: { 'mcp-session-id': 'nope' },
+      });
+      expect(response.status).toBe(404);
+      const body = (await response.json()) as { error: { code: number; data?: unknown } };
+      expect(body.error.code).toBe(-32000);
+      expect(body.error.data).toBeUndefined();
+    }
+  });
+
+  it('answers a malformed JSON body with a plain -32700 parse error', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data?: unknown; source?: string };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    // The parse error keeps its own JSON-RPC code: no proxy code overwrites it.
+    expect(body.error.code).toBe(-32700);
+    expect(body.error.message).toContain('Parse error');
+    expect(body.error.data).toBeUndefined();
+    expect(body.error.source).toBeUndefined();
+  });
+
+  it('answers an oversized body with 413 and a -32050 `too_large` proxy error', async () => {
+    const response = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { pad: 'x'.repeat(MAX_BODY_BYTES + 1024) } }),
+    });
+    expect(response.status).toBe(413);
+    const body = (await response.json()) as {
+      jsonrpc: string;
+      id: unknown;
+      error: { code: number; message: string; data: { source: string; reason: string } };
+    };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.id).toBeNull();
+    // An oversized body is a proxy failure, not a parse error: proxy code + payload.
+    expect(body.error.code).toBe(PROXY_ERROR_CODE);
+    expect(body.error.data).toEqual({ source: PROXY_ERROR_SOURCE, reason: 'too_large' });
+  });
+
+  it('reaps an idle session; its id then answers 404', async () => {
+    const ttlHandler = createMcpEndpointHandler({ name: 'fake', upstream: local!, sessionIdleTtlMs: 300 });
+    const server = createServer((req, res) => void ttlHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+    const url = `http://127.0.0.1:${address.port}/mcp/fake`;
+
+    try {
+      const initialized = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+      expect(initialized.status).toBe(200);
+      await initialized.body?.cancel();
+      const sessionId = initialized.headers.get('mcp-session-id');
+      expect(sessionId).toBeTruthy();
+      expect(ttlHandler.sessionCount()).toBe(1);
+
+      // The reaper runs every `ttl/2` (floored at 50ms): wait for it to forget the session.
+      await waitFor(() => ttlHandler.sessionCount() === 0, 5_000, 'idle session to be reaped');
+
+      const after = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          'mcp-session-id': sessionId!,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+      });
+      // A reaped id is an unknown id: 404 tells the client to re-initialize (spec).
+      expect(after.status).toBe(404);
+      const body = (await after.json()) as { error: { code: number; message: string; data?: unknown } };
+      expect(body.error.code).toBe(-32000);
+      expect(body.error.message).toContain('unknown Mcp-Session-Id');
+      expect(body.error.data).toBeUndefined();
+    } finally {
+      await ttlHandler.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('keeps a session alive while it is being used', async () => {
+    const ttlHandler = createMcpEndpointHandler({ name: 'fake', upstream: local!, sessionIdleTtlMs: 400 });
+    const server = createServer((req, res) => void ttlHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+    const url = `http://127.0.0.1:${address.port}/mcp/fake`;
+
+    try {
+      const client = new Client({ name: 'warren-ttl', version: '1.0.0' });
+      const transport = new StreamableHTTPClientTransport(new URL(url));
+      await client.connect(transport);
+      expect(ttlHandler.sessionCount()).toBe(1);
+
+      // Keep poking the session: each request refreshes `lastSeen`, so the reaper
+      // must never touch it.
+      for (let i = 0; i < 6; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        await client.listTools();
+      }
+      expect(ttlHandler.sessionCount()).toBe(1);
+      await client.close();
+    } finally {
+      await ttlHandler.close();
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('fails initialize with a -32050 proxy error when nothing is upstream', async () => {
+    const offline: Upstream = {
+      name: 'offline-server',
+      get info(): UpstreamInfo {
+        throw proxyError('offline', 'the work PC is not connected');
+      },
+      available: false,
+      request: async () => {
+        throw proxyError('offline', 'the work PC is not connected');
+      },
+      notification: async () => undefined,
+      subscribe: () => () => undefined,
+    };
+    const offlineHandler = createMcpEndpointHandler({ name: 'offline-server', upstream: offline });
+    const server = createServer((req, res) => void offlineHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/mcp/offline-server`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('10');
+      const body = (await response.json()) as {
+        jsonrpc: string;
+        id: unknown;
+        error: { code: number; message: string; data: { source: string; reason: string } };
+      };
+      expect(body.jsonrpc).toBe('2.0');
+      expect(body.id).toBeNull();
+      expect(body.error.code).toBe(PROXY_ERROR_CODE);
+      // `source`/`reason` belong in `error.data`, never next to `error.code`.
+      expect(body.error.data).toEqual({ source: PROXY_ERROR_SOURCE, reason: 'offline' });
+      expect(body.error.data.source).toBe(PROXY_ERROR_SOURCE);
+      expect(body.error.data.reason).toBe('offline');
+      expect('source' in body.error).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('answers initialize with 500 when the upstream resolver fails for a non-proxy reason', async () => {
+    const broken: Upstream = {
+      name: 'broken-server',
+      get info(): UpstreamInfo {
+        throw new Error('config is broken');
+      },
+      available: false,
+      request: async () => {
+        throw new Error('config is broken');
+      },
+      notification: async () => undefined,
+      subscribe: () => () => undefined,
+    };
+    const brokenHandler = createMcpEndpointHandler({ name: 'broken-server', upstream: broken });
+    const server = createServer((req, res) => void brokenHandler.handle(req, res));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('failed to bind');
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/mcp/broken-server`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 7,
+          method: 'initialize',
+          params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } },
+        }),
+      });
+      expect(response.status).toBe(500);
+      expect(response.headers.get('retry-after')).toBeNull();
+      const body = (await response.json()) as { id: unknown; error: { code: number; message: string; data?: unknown } };
+      // The id is not trusted before a session exists: errors answer with `id: null`.
+      expect(body.id).toBeNull();
+      expect(body.error.code).toBe(-32603);
+      expect(body.error.message).toBe('config is broken');
+      expect(body.error.data).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});

@@ -1,0 +1,85 @@
+# Example client configuration for mcp-websocket-proxy.
+#
+# This is the file the work PC reads at startup. Copy it, edit it, and point the
+# client at it:
+#
+#   mcp-websocket-proxy-client --config ./config.yaml
+#
+# or set MCP_PROXY_CLIENT_CONFIG instead of passing --config. Validate a file
+# without starting anything (no child processes, no network):
+#
+#   mcp-websocket-proxy-client --config ./config.yaml --check
+#
+# The file is YAML (JSON is accepted too). Every string may contain `${env:VAR}`,
+# which is replaced from the environment; a variable that is not set is an error
+# naming the variable, and values are never printed in an error message.
+
+server:
+  # Where the Warren-side proxy listens for tunnels. Must be ws:// or wss://.
+  # Plain ws:// is refused unless the host is local (localhost, 127.0.0.1, ::1)
+  # or allowInsecure is true: the token travels in an upgrade header and must not
+  # cross a network in clear text.
+  url: wss://warren.example.com/tunnel
+  # Bearer token for the tunnel upgrade request. Keep it in the environment; the
+  # client scrubs it out of every log line.
+  token: ${env:MCP_PROXY_CLIENT_TOKEN}
+  # Accept an unencrypted ws:// endpoint. Only ever set this on a network you
+  # control (a VPN, a lab bench) — never for a public host.
+  allowInsecure: false
+
+# Identity sent in `hello`; shows up on `GET /status`. Defaults to os.hostname().
+clientId: work-pc
+
+log:
+  # debug | info | warn | error
+  level: info
+  # Optional JSON-lines log file. Omit it to log to stderr only. The file is
+  # rotated at 10 MiB, keeping 1 backup (`<file>.1`).
+  file: 'C:\Users\me\AppData\Local\mcp-websocket-proxy\client.log'
+
+# The built-in filesystem server: the published
+# @modelcontextprotocol/server-filesystem, started with this Node binary (never
+# through npx, so nothing is downloaded at runtime) and confined to `roots`.
+# Enabled by default. The client does not declare the MCP `roots` capability, so
+# a remote client cannot widen these roots — only this file can.
+filesystem:
+  enabled: true
+  # The name it is published under: Warren reaches it at `/mcp/<name>`.
+  # Must not collide with a key under `servers:`. Default: filesystem.
+  name: filesystem
+  # Required when enabled: the directories it may serve. Anything outside them is
+  # refused by the server itself.
+  roots:
+    - 'C:\Users\me\Projects'
+    - 'D:\shared\docs'
+
+# Local stdio MCP servers to expose, one per key. The key is the tunnel name, so
+# Warren reaches the entry below at `/mcp/memory` and `/mcp/postgres`. Names must
+# match ^[a-z0-9][a-z0-9_-]{0,62}$ and must be unique (case-insensitively) and
+# different from `filesystem.name`.
+servers:
+  # The classic "run it from npm" case. `npx` must exist on the work PC and be
+  # able to reach the registry (or a cache) when the client starts.
+  memory:
+    command: npx
+    args: ['-y', '@modelcontextprotocol/server-memory']
+    # Environment for the child. `${env:...}` is expanded here too, so a key can
+    # live in the machine's environment instead of this file.
+    env: {}
+    # Start the child with `process.env` plus `env`. Default false: a child gets
+    # only a minimal, safe environment plus what you list under `env`.
+    inheritEnv: false
+
+  # A server that needs a secret and a working directory.
+  postgres:
+    command: npx
+    args: ['-y', '@modelcontextprotocol/server-postgres']
+    env:
+      # The connection string goes through the environment, not a command-line
+      # argument, so it is not visible in `ps`/Task Manager. `${env:...}` is
+      # expanded here too, and it fails at startup with
+      # `environment variable DATABASE_URL is not set` rather than starting a
+      # server with an empty connection string.
+      DATABASE_URL: ${env:DATABASE_URL}
+    cwd: 'C:\work'
+    inheritEnv: false

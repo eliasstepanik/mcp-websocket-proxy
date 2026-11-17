@@ -1,0 +1,440 @@
+/**
+ * The Warren-side HTTP server (T2d): one `node:http` listener that also carries the
+ * tunnel WebSocket upgrade on the **same** port.
+ *
+ * Routes:
+ * - `upgrade /tunnel`               -> a {@link TunnelHandler} per socket, but only
+ *                                      after the upgrade request carried a valid
+ *                                      **client** bearer token (T3)
+ * - `POST/GET/DELETE /mcp/<name>`   -> one {@link McpEndpointHandler} per server
+ *                                      name, bound to `upstreams.get(name)`, behind
+ *                                      the **endpoint** bearer token
+ * - `GET /healthz`                  -> `200 {"status":"ok"}`, no auth (load balancers)
+ * - `GET /status`                   -> who is connected: behind the endpoint token
+ *
+ * Wiring between the layers: {@link TunnelUpstreams} resolves the tunnel that
+ * currently serves a name through a `clientId -> tunnel` map, so the app keeps that
+ * map correct from registry events alone:
+ *
+ * - `server_up`       -> `upstreams.track(clientId, handler)` (a `hello` is only
+ *                        observable through the registry, and every connection that
+ *                        owns a name has said `server_up` for it)
+ * - `connection_lost` -> `upstreams.untrack(clientId)`
+ * - socket close      -> `upstreams.untrack(clientId)`, but only while that
+ *                        connection is still the tracked one: a socket replaced by a
+ *                        reconnect must not untrack its replacement.
+ */
+
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import { WebSocketServer } from 'ws';
+
+import { PROXY_ERROR_CODE, PROXY_ERROR_SOURCE } from '../shared/errors.js';
+import type { UpstreamInfo } from '../shared/upstream.js';
+import { verifyBearer } from './auth.js';
+import { MAX_BODY_BYTES, SERVER_NAME_PATTERN, createMcpEndpointHandler, type McpEndpointHandler } from './mcp-endpoint.js';
+import { Registry, type WsLike } from './registry.js';
+import { TunnelUpstreams, type TunnelUpstreamTransport } from './tunnel-upstream.js';
+import { TunnelHandler } from './tunnel.js';
+
+export interface AppOptions {
+  /**
+   * Bearer token that a tunnel client must present on `upgrade /tunnel`. Required:
+   * an unauthenticated tunnel would hand anyone the servers behind it.
+   */
+  clientToken: string;
+  /** Bearer token that Warren must present on `/mcp/<name>` and `/status`. */
+  endpointToken: string;
+  /** Registry to use. Default: a fresh one. */
+  registry?: Registry<WsLike>;
+  /** Upstream manager to use. Default: a fresh one over `registry`. */
+  upstreams?: TunnelUpstreams;
+  /** Tunnel keepalive interval, forwarded to every {@link TunnelHandler}. */
+  heartbeatIntervalMs?: number;
+  /** How long a tunnel may go without answering a ping, forwarded to every {@link TunnelHandler}. */
+  heartbeatTimeoutMs?: number;
+  /** Default per-request deadline, forwarded to every {@link TunnelHandler}. */
+  requestTimeoutMs?: number;
+  /**
+   * Size limit for tunnel frames (`ws` `maxPayload`) and for declared HTTP POST
+   * bodies (`content-length`). Default {@link MAX_BODY_BYTES}; the endpoint applies
+   * its own limit to chunked bodies.
+   */
+  maxBodyBytes?: number;
+  /** Idle TTL for Warren sessions, forwarded to every endpoint handler. */
+  sessionIdleTtlMs?: number;
+  /** Reported as `welcome.serverVersion`. */
+  serverVersion?: string;
+  /**
+   * Called once per finished HTTP request with the fields safe to log: method,
+   * path, status and duration. Never params, results or tokens. `main.ts` turns
+   * these into one JSON line each.
+   */
+  onRequest?: (entry: RequestLogEntry) => void;
+}
+
+/** What the app reports per request (see {@link AppOptions.onRequest}). */
+export interface RequestLogEntry {
+  method: string;
+  path: string;
+  status: number;
+  durationMs: number;
+}
+
+/** One row of `/status`: a connected client and the servers it owns. */
+export interface ClientStatus {
+  clientId: string;
+  servers: { name: string; up: boolean }[];
+}
+
+export interface App {
+  readonly httpServer: HttpServer;
+  readonly registry: Registry<WsLike>;
+  readonly upstreams: TunnelUpstreams;
+  /** The `/status` payload: connected clients with their server names and state. */
+  status(): { clients: ClientStatus[]; serverVersion: string };
+  close(): Promise<void>;
+}
+
+/** `/mcp/<name>` (an optional trailing slash is tolerated). */
+const MCP_ROUTE_RE = /^\/mcp\/([^/?#]+)\/?$/;
+
+/**
+ * The `list_changed` notification a capability implies, and where to read the flag.
+ * Used to synthesise the notifications a server could not send while it was down
+ * (see the `server_up` branch of the registry listener in {@link createApp}).
+ */
+const LIST_CHANGED_NOTIFICATIONS: ReadonlyArray<{
+  readonly method: string;
+  readonly enabled: (info: UpstreamInfo) => boolean;
+}> = [
+  { method: 'notifications/tools/list_changed', enabled: (info) => info.capabilities.tools?.listChanged === true },
+  { method: 'notifications/resources/list_changed', enabled: (info) => info.capabilities.resources?.listChanged === true },
+  { method: 'notifications/prompts/list_changed', enabled: (info) => info.capabilities.prompts?.listChanged === true },
+];
+
+/**
+ * Builds the single-port server: HTTP MCP endpoints plus the tunnel WebSocket
+ * upgrade on the same listener. The returned server is **not** listening yet;
+ * the caller calls `httpServer.listen(...)`.
+ */
+export function createApp(options: AppOptions): App {
+  const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+  const registry = options.registry ?? new Registry<WsLike>();
+  const upstreams = options.upstreams ?? new TunnelUpstreams(registry);
+  const serverVersion = options.serverVersion ?? 'unknown';
+  // Fail loudly at construction rather than accepting a connection nobody asked for.
+  if (!options.clientToken || !options.endpointToken) {
+    throw new Error('createApp requires both clientToken and endpointToken');
+  }
+  if (options.clientToken === options.endpointToken) {
+    throw new Error('createApp requires clientToken and endpointToken to be different');
+  }
+  const clientToken = options.clientToken;
+  const endpointToken = options.endpointToken;
+
+  /** One endpoint handler per server name, created on first use. */
+  const endpoints = new Map<string, McpEndpointHandler>();
+  /** The live tunnel per socket (the `clientId` is only known after `hello`). */
+  const tunnelsBySocket = new Map<WsLike, TunnelUpstreamTransport>();
+  /** The tunnel currently tracked in `upstreams`, per `clientId`. */
+  const trackedByClient = new Map<string, TunnelUpstreamTransport>();
+
+  const endpointFor = (name: string): McpEndpointHandler => {
+    let endpoint = endpoints.get(name);
+    if (!endpoint) {
+      endpoint = createMcpEndpointHandler({
+        name,
+        // Resolved per call: the endpoint must see a reconnect (or a name that went
+        // `offline`) without rebuilding the handler.
+        upstream: () => upstreams.get(name),
+        ...(options.sessionIdleTtlMs !== undefined ? { sessionIdleTtlMs: options.sessionIdleTtlMs } : {}),
+      });
+      endpoints.set(name, endpoint);
+    }
+    return endpoint;
+  };
+
+  /** The tunnel that currently serves `clientId`, via the registry's live socket. */
+  const tunnelForClient = (clientId: string): TunnelUpstreamTransport | undefined => {
+    const connection = registry.get(clientId);
+    return connection ? tunnelsBySocket.get(connection.ws) : undefined;
+  };
+
+  const track = (clientId: string, tunnel: TunnelUpstreamTransport): void => {
+    upstreams.track(clientId, tunnel);
+    trackedByClient.set(clientId, tunnel);
+  };
+
+  /** Forget `clientId` only when `tunnel` is still the tracked one. */
+  const untrack = (clientId: string, tunnel?: TunnelUpstreamTransport): void => {
+    const current = trackedByClient.get(clientId);
+    if (!current || (tunnel !== undefined && current !== tunnel)) return;
+    trackedByClient.delete(clientId);
+    upstreams.untrack(clientId);
+  };
+
+  /**
+   * Names that went down while Warren sessions were open. A server that comes back
+   * could not tell those sessions anything about the gap, so the proxy synthesises
+   * the `list_changed` notifications its capabilities allow (see below).
+   */
+  const downSince = new Set<string>();
+
+  // Registry events are the only place a `clientId` becomes observable, so the
+  // tunnel map is maintained from them: a connection that owns a name has said
+  // `server_up` for it, and `connection_lost` fires exactly when the registry
+  // forgets a connection (a socket replaced by a reconnect emits neither).
+  const offRegistry = registry.on((event) => {
+    if (event.type === 'server_down') {
+      // Only names with live Warren sessions can miss anything; the endpoint is
+      // looked up, never created, so a name nobody opened costs nothing.
+      const endpoint = endpoints.get(event.server);
+      if (endpoint !== undefined && endpoint.sessionCount() > 0) downSince.add(event.server);
+      return;
+    }
+    if (event.type === 'server_up') {
+      const tunnel = tunnelForClient(event.clientId);
+      if (tunnel) track(event.clientId, tunnel);
+      if (downSince.delete(event.server)) {
+        // Down -> up: tell the sessions that survived the outage that the lists they
+        // cached may be stale. The upstream cannot do this itself (it was not
+        // reachable), so the proxy sends what the advertised capabilities allow.
+        const endpoint = endpoints.get(event.server);
+        if (endpoint && endpoint.sessionCount() > 0) {
+          for (const { method, enabled } of LIST_CHANGED_NOTIFICATIONS) {
+            if (enabled(event.info)) endpoint.notifyAll(method);
+          }
+        }
+      }
+      return;
+    }
+    if (event.type === 'connection_lost') {
+      for (const name of event.servers) {
+        const endpoint = endpoints.get(name);
+        if (endpoint !== undefined && endpoint.sessionCount() > 0) downSince.add(name);
+      }
+      untrack(event.clientId);
+    }
+  });
+
+  /**
+   * The `/status` payload: one row per connected client, each listing the server
+   * names it owns with their current state. Built from the registry alone, so a
+   * client that has said `hello` but no `server_up` yet shows up with no servers.
+   */
+  const status = (): { clients: ClientStatus[]; serverVersion: string } => ({
+    clients: registry
+      .connections()
+      .sort((a, b) => (a.clientId < b.clientId ? -1 : a.clientId > b.clientId ? 1 : 0))
+      .map((connection) => ({
+        clientId: connection.clientId,
+        servers: [...connection.servers]
+          .sort()
+          .map((name) => ({ name, up: registry.lookup(name)?.up === true })),
+      })),
+    serverVersion,
+  });
+
+  const handleRequest = (req: IncomingMessage, res: ServerResponse): void => {
+    const path = (req.url ?? '/').split('?')[0] ?? '/';
+    const startedAt = process.hrtime.bigint();
+    // One log line per request, written when the response is finished. Only
+    // method/path/status/duration: never headers, params or tokens.
+    res.once('finish', () => {
+      options.onRequest?.({
+        method: req.method ?? 'GET',
+        path,
+        status: res.statusCode,
+        durationMs: Number(process.hrtime.bigint() - startedAt) / 1e6,
+      });
+    });
+
+    if (path === '/healthz') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { allow: 'GET' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    if (path === '/status') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.writeHead(405, { allow: 'GET' });
+        res.end();
+        return;
+      }
+      if (!verifyBearer(req.headers.authorization, endpointToken)) {
+        sendUnauthorized(res);
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(status()));
+      return;
+    }
+
+    const match = MCP_ROUTE_RE.exec(path);
+    if (match) {
+      // Auth before the body is read: an unauthenticated caller must not be able to
+      // make the proxy buffer a POST body.
+      if (!verifyBearer(req.headers.authorization, endpointToken)) {
+        sendUnauthorized(res);
+        return;
+      }
+      // A malformed percent escape (`/mcp/%E0`) makes `decodeURIComponent` throw a
+      // `URIError` inside the synchronous request listener: answer with the same 404
+      // an invalid name gets instead of letting the exception escape.
+      const raw = match[1] ?? '';
+      let name: string;
+      try {
+        name = decodeURIComponent(raw);
+      } catch {
+        sendJsonRpc(res, 404, `Not Found: invalid server name ${JSON.stringify(raw)}`);
+        return;
+      }
+      if (!SERVER_NAME_PATTERN.test(name)) {
+        sendJsonRpc(res, 404, `Not Found: invalid server name ${JSON.stringify(name)}`);
+        return;
+      }
+      // The endpoint enforces the limit on the stream; this catches a declared
+      // `content-length` before the body is read at all.
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > maxBodyBytes) {
+        sendJsonRpc(res, 413, `Request body too large (limit ${maxBodyBytes} bytes)`, 'too_large');
+        return;
+      }
+      void endpointFor(name)
+        .handle(req, res)
+        .catch(() => {
+          /* the endpoint answers its own failures */
+        });
+      return;
+    }
+
+    sendJsonRpc(res, 404, `Not Found: ${path}`);
+  };
+
+  const httpServer = createServer(handleRequest);
+
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: maxBodyBytes,
+  });
+
+  httpServer.on('upgrade', (req, socket, head) => {
+    const path = (req.url ?? '/').split('?')[0] ?? '/';
+    if (path !== '/tunnel') {
+      // Nothing else upgrades: answer like a plain 404 so a client can tell a wrong
+      // path from a dead server.
+      socket.write('HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    // Authenticate the *upgrade request* before the protocol is handed to `ws`: a
+    // rejected client gets a plain 401 (no WebSocket handshake at all), which the
+    // client library surfaces as a failed handshake.
+    if (!verifyBearer(req.headers.authorization, clientToken)) {
+      const body = 'Unauthorized: token\r\n';
+      socket.write(
+        'HTTP/1.1 401 Unauthorized\r\n' +
+          'www-authenticate: Bearer\r\n' +
+          'content-type: text/plain; charset=utf-8\r\n' +
+          'connection: close\r\n' +
+          `content-length: ${Buffer.byteLength(body)}\r\n` +
+          '\r\n' +
+          body,
+      );
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const handler = new TunnelHandler(ws, registry, {
+        ...(options.heartbeatIntervalMs !== undefined ? { heartbeatIntervalMs: options.heartbeatIntervalMs } : {}),
+        ...(options.heartbeatTimeoutMs !== undefined ? { heartbeatTimeoutMs: options.heartbeatTimeoutMs } : {}),
+        ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {}),
+        serverVersion,
+      });
+      tunnelsBySocket.set(ws, handler);
+      ws.on('close', () => {
+        tunnelsBySocket.delete(ws);
+        const clientId = handler.clientIdValue;
+        if (clientId !== undefined) untrack(clientId, handler);
+      });
+    });
+  });
+
+  const close = async (): Promise<void> => {
+    offRegistry();
+    await Promise.all([...endpoints.values()].map((endpoint) => endpoint.close()));
+    endpoints.clear();
+    await Promise.all(
+      [...wss.clients].map(
+        (ws) =>
+          new Promise<void>((resolve) => {
+            ws.once('close', () => resolve());
+            try {
+              ws.close(1001, 'server shutting down');
+            } catch {
+              resolve();
+            }
+          }),
+      ),
+    );
+    await new Promise<void>((resolve, reject) => {
+      httpServer.close((error) => (error ? reject(error) : resolve()));
+    });
+    tunnelsBySocket.clear();
+    trackedByClient.clear();
+    downSince.clear();
+  };
+
+  return { httpServer, registry, upstreams, status, close };
+}
+
+/**
+ * The 401 for `/mcp/<name>` and `/status`: a JSON-RPC error body (what a Warren
+ * client renders) plus the `WWW-Authenticate` challenge the spec asks for. The
+ * message never mentions the token, only that one was needed.
+ */
+function sendUnauthorized(res: ServerResponse): void {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(401, {
+    'content-type': 'application/json',
+    'www-authenticate': 'Bearer realm="mcp-proxy"',
+  });
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32000,
+        message: 'Unauthorized: a valid bearer token is required',
+      },
+    }),
+  );
+}
+
+/** A JSON-RPC-shaped error for routing failures (unknown route or server name). */
+function sendJsonRpc(res: ServerResponse, status: number, message: string, reason?: string): void {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: reason === undefined ? -32000 : PROXY_ERROR_CODE,
+        message,
+        ...(reason === undefined ? {} : { data: { source: PROXY_ERROR_SOURCE, reason } }),
+      },
+    }),
+  );
+}
