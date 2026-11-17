@@ -7,11 +7,13 @@
 .DESCRIPTION
     Creates (or replaces, with -Force) the task "McpWebsocketProxyClient":
 
-      trigger    At log on, for the current user only
+      trigger    At log on, for the current user only, plus a repeat every
+                 5 minutes indefinitely (see $RepeatTrigger below)
       action     node <RepoRoot>\dist\client\main.js --config <ConfigPath>
-      settings   hidden, no instance limit override (a second start is ignored),
-                 restart on failure: 3 attempts, 1 minute apart, no execution
-                 time limit (the agent is meant to run forever)
+      settings   hidden in the Task Scheduler UI, no instance limit override (a
+                 second start is ignored), restart on failure: 3 attempts, 1
+                 minute apart, no execution time limit (the agent is meant to
+                 run forever)
 
     By default the task is registered with LogonType S4U ("run whether the user
     is logged on or not", no stored password): it then runs in its own session,
