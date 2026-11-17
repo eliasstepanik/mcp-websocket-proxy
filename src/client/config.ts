@@ -265,21 +265,46 @@ function readSection(root: Record<string, unknown>, key: string, errors: string[
   return raw;
 }
 
+/** The text at `path` in the *unexpanded* document, when it is a string. */
+function rawStringAt(root: Record<string, unknown>, ...path: string[]): string | undefined {
+  let node: unknown = root;
+  for (const key of path) {
+    if (!isRecord(node)) return undefined;
+    node = node[key];
+  }
+  return typeof node === 'string' ? node : undefined;
+}
+
+/**
+ * The first line of a `yaml` library error.
+ *
+ * The library appends the offending source line and a caret to its message; the
+ * file may hold a literal secret on exactly that line, so only the problem and
+ * its position are kept.
+ */
+function yamlErrorLine(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split('\n', 1)[0]?.trim() || message;
+}
+
 // ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
 
 /** Plain `ws://` is only acceptable for a host the token never has to cross. */
-function validateUrl(url: string, allowInsecure: boolean, errors: string[]): void {
+function validateUrl(url: string, allowInsecure: boolean, errors: string[], display?: string): void {
+  // What the message prints: the text from the file, never the expanded value
+  // (which may be a secret pulled in through `${env:...}`).
+  const shown = display ?? url;
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    errors.push(`server.url is not a valid URL: ${JSON.stringify(url)}`);
+    errors.push(`server.url is not a valid URL: ${JSON.stringify(shown)}`);
     return;
   }
   if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-    errors.push(`server.url must start with ws:// or wss://, got ${JSON.stringify(parsed.protocol)}`);
+    errors.push(`server.url must start with ws:// or wss://, got ${JSON.stringify(shown)}`);
     return;
   }
   if (parsed.protocol === 'ws:' && !allowInsecure && !LOCAL_HOSTS.has(parsed.hostname)) {
@@ -290,23 +315,27 @@ function validateUrl(url: string, allowInsecure: boolean, errors: string[]): voi
   }
 }
 
-function parseServerSection(root: Record<string, unknown>, errors: string[]): ClientConfig['server'] {
+function parseServerSection(root: Record<string, unknown>, errors: string[], rawRoot: Record<string, unknown>): ClientConfig['server'] {
   const section = readSection(root, 'server', errors);
   const url = readString(section, 'url', 'server', errors, { required: true }) ?? '';
   // Only non-empty is required: token length is the server's policy, and a
   // client-side guess would reject valid tokens.
   const token = readString(section, 'token', 'server', errors, { required: true }) ?? '';
   const allowInsecure = readBoolean(section, 'allowInsecure', 'server', errors, false);
-  if (url.trim()) validateUrl(url.trim(), allowInsecure, errors);
+  if (url.trim()) validateUrl(url.trim(), allowInsecure, errors, rawStringAt(rawRoot, 'server', 'url'));
   return { url: url.trim(), token, allowInsecure };
 }
 
-function parseLogSection(root: Record<string, unknown>, errors: string[]): ClientLogConfig {
+function parseLogSection(root: Record<string, unknown>, errors: string[], rawRoot: Record<string, unknown>): ClientLogConfig {
   const section = readSection(root, 'log', errors);
   const rawLevel = readString(section, 'level', 'log', errors, { default: 'info' }) ?? 'info';
   const level = rawLevel.trim().toLowerCase();
   const known = (LOG_LEVELS as readonly string[]).includes(level);
-  if (!known) errors.push(`log.level must be one of ${LOG_LEVELS.join(', ')}, got ${JSON.stringify(rawLevel)}`);
+  if (!known) {
+    errors.push(
+      `log.level must be one of ${LOG_LEVELS.join(', ')}, got ${JSON.stringify(rawStringAt(rawRoot, 'log', 'level') ?? rawLevel)}`,
+    );
+  }
   const file = readString(section, 'file', 'log', errors);
   return {
     level: (known ? level : 'info') as LogLevel,
@@ -316,14 +345,14 @@ function parseLogSection(root: Record<string, unknown>, errors: string[]): Clien
   };
 }
 
-function parseFilesystemSection(root: Record<string, unknown>, errors: string[]): FilesystemServerConfig {
+function parseFilesystemSection(root: Record<string, unknown>, errors: string[], rawRoot: Record<string, unknown>): FilesystemServerConfig {
   const section = readSection(root, 'filesystem', errors);
   const enabled = readBoolean(section, 'enabled', 'filesystem', errors, true);
   const rawName = readString(section, 'name', 'filesystem', errors);
   const name = rawName?.trim() ? rawName.trim() : DEFAULT_FILESYSTEM_SERVER_NAME;
   if (!SERVER_NAME_RE.test(name)) {
     errors.push(
-      `invalid server name ${JSON.stringify(rawName)}: filesystem.name must match ${SERVER_NAME_RE}`,
+      `invalid server name ${JSON.stringify(rawStringAt(rawRoot, 'filesystem', 'name') ?? rawName)}: filesystem.name must match ${SERVER_NAME_RE}`,
     );
   }
   const roots = readStringArray(section, 'roots', 'filesystem', errors);
