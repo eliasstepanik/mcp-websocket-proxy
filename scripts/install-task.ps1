@@ -127,9 +127,29 @@ $ArgumentList = @("`"$Entry`"", '--config', "`"$ConfigPath`"")
 $Action = New-ScheduledTaskAction -Execute $NodePath -Argument $ArgumentList -WorkingDirectory $RepoRoot
 
 $UserId = "$env:USERDOMAIN\$env:USERNAME"
-$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
+$AtLogOnTrigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
 
-# Hidden: no console window. RestartCount/RestartInterval: the crash policy.
+# A second, recurring trigger: every 5 minutes, forever. On its own it would
+# start a second copy every 5 minutes, but MultipleInstances IgnoreNew (below)
+# makes every one of those ticks a no-op while the agent is alive - so each tick
+# is instead a watchdog that brings the agent back. That is what makes the
+# restart-on-failure policy dependable: Task Scheduler's own restart attempts
+# stop after RestartCount, this repeat never does.
+#
+# Duration must be a plain TimeSpan: [TimeSpan]::MaxValue is rejected when the
+# task XML is serialised, so 9999 days (~27 years) stands in for "indefinitely".
+$RepeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) `
+    -RepetitionDuration (New-TimeSpan -Days 9999)
+$Trigger = @($AtLogOnTrigger, $RepeatTrigger)
+
+# -Hidden hides the task in the Task Scheduler UI; it does not hide a console
+# window. With LogonType S4U the task runs in its own session so no window ever
+# appears. With the -LogonType Interactive fallback a console window does show
+# for the duration of the run; to keep that one off screen, run the action as
+#   conhost.exe --headless node.exe <Entry> --config <ConfigPath>
+# (Windows 11 22H2 and newer) instead of node.exe directly.
+# RestartCount/RestartInterval: the crash policy.
 # MultipleInstances IgnoreNew: "do not start a new instance if one is already
 # running".
 $Settings = New-ScheduledTaskSettingsSet `
