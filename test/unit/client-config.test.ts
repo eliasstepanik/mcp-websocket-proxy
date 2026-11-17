@@ -252,31 +252,33 @@ describe('server.url', () => {
 
 describe('error messages quote the file, not the expanded value', () => {
   /** Every case: the field holds only `${env:VAR}`, whose value is a secret. */
-  const cases: { label: string; overrides: Record<string, unknown>; env: string; expect: RegExp }[] = [
+  const cases: { label: string; varName: string; value: string; overrides: Record<string, unknown>; expect: RegExp }[] = [
     {
       label: 'server.url',
+      varName: 'BAD_URL',
+      value: `http://${SECRET}/tunnel`,
       overrides: { server: { url: '${env:BAD_URL}', token: '${env:MCP_PROXY_CLIENT_TOKEN}' } },
-      env: `http://${SECRET}/tunnel`,
       expect: /must start with ws:\/\/ or wss:\/\/, got "\$\{env:BAD_URL\}"/,
     },
     {
       label: 'log.level',
+      varName: 'BAD_LEVEL',
+      value: SECRET,
       overrides: { log: { level: '${env:BAD_LEVEL}' } },
-      env: SECRET,
       expect: /log\.level must be one of .* got "\$\{env:BAD_LEVEL\}"/,
     },
     {
       label: 'filesystem.name',
+      varName: 'BAD_NAME',
+      value: `Bad ${SECRET} Name`,
       overrides: { filesystem: { roots: ['/tmp'], name: '${env:BAD_NAME}' } },
-      env: `Bad ${SECRET} Name`,
       expect: /invalid server name "\$\{env:BAD_NAME\}": filesystem\.name must match/,
     },
   ];
 
   for (const testCase of cases) {
     it(testCase.label, () => {
-      const env: NodeJS.ProcessEnv = { ...baseEnv(), [testCase.env === '' ? 'UNUSED' : testCase.envName]: testCase.env };
-      const check = checkConfigText(minimal(testCase.overrides), env);
+      const check = checkConfigText(minimal(testCase.overrides), { ...baseEnv(), [testCase.varName]: testCase.value });
       expect(check.ok).toBe(false);
       const joined = check.errors.join('\n');
       expect(joined).toMatch(testCase.expect);
