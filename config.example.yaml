@@ -54,15 +54,15 @@ filesystem:
     - 'D:\shared\docs'
 
 # Local stdio MCP servers to expose, one per key. The key is the tunnel name, so
-# Warren reaches the entry below at `/mcp/time` and `/mcp/postgres`. Names must
+# Warren reaches the entry below at `/mcp/memory` and `/mcp/postgres`. Names must
 # match ^[a-z0-9][a-z0-9_-]{0,62}$ and must be unique (case-insensitively) and
 # different from `filesystem.name`.
 servers:
   # The classic "run it from npm" case. `npx` must exist on the work PC and be
   # able to reach the registry (or a cache) when the client starts.
-  time:
+  memory:
     command: npx
-    args: ['-y', '@modelcontextprotocol/server-time']
+    args: ['-y', '@modelcontextprotocol/server-memory']
     # Environment for the child. `${env:...}` is expanded here too, so a key can
     # live in the machine's environment instead of this file.
     env: {}
@@ -73,10 +73,13 @@ servers:
   # A server that needs a secret and a working directory.
   postgres:
     command: npx
-    args: ['-y', '@modelcontextprotocol/server-postgres', '${env:DATABASE_URL}']
+    args: ['-y', '@modelcontextprotocol/server-postgres']
     env:
-      # Fails at startup with `environment variable DATABASE_URL is not set`
-      # rather than starting a server with an empty connection string.
+      # The connection string goes through the environment, not a command-line
+      # argument, so it is not visible in `ps`/Task Manager. `${env:...}` is
+      # expanded here too, and it fails at startup with
+      # `environment variable DATABASE_URL is not set` rather than starting a
+      # server with an empty connection string.
       DATABASE_URL: ${env:DATABASE_URL}
     cwd: 'C:\work'
     inheritEnv: false
