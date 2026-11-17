@@ -70,10 +70,9 @@ function configText(): string {
 
 function writeConfig(text: string): string {
   const path = join(dir, 'config.yaml');
-  // The real fs is used for the config file itself; the mock only replaces the
-  // functions `app.ts` calls, and `readFileSync` is not among them.
-  const { writeFileSync } = vi.hoisted(() => ({})) as never;
-  void writeFileSync;
+  // `writeFileSync` comes from the mocked module, which spreads the real `node:fs`
+  // and only replaces the four calls `app.ts` makes.
+  realFs.writeFileSync(path, text, 'utf8');
   return path;
 }
 
