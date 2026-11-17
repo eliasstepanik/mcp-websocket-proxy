@@ -143,6 +143,10 @@ describe('killProcessTree (no-op cases)', () => {
     // A self-pid must never be killed: the test process is still here to say so.
     await expect(killProcessTree(process.pid)).resolves.toBeUndefined();
     expect(isAlive(process.pid)).toBe(true);
+    // pid 1 (init / docker-init) must never be killed either: it takes the whole
+    // machine or container down. Still alive here to prove it.
+    await expect(killProcessTree(1)).resolves.toBeUndefined();
+    expect(isAlive(1)).toBe(true);
   });
 });
 
