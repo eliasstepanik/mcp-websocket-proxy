@@ -149,6 +149,45 @@ function runCli(args: string[], extraEnv: NodeJS.ProcessEnv = {}): { status: num
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
+/**
+ * Runs the CLI as a live subprocess, sends `signal` once `marker` appears on its
+ * stderr, and resolves with the exit code and the output.
+ *
+ * The `starting` line is written *inside* `startClientApp`, before the children
+ * have finished spawning, so a signal sent at that moment arrives while startup
+ * is still in progress.
+ */
+function runCliUntilMarker(args: string[], marker: string, signal: NodeJS.Signals): Promise<{ status: number | null; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('npx', ['tsx', 'src/client/main.ts', ...args], {
+      cwd: REPO_ROOT,
+      env: { ...process.env, [TOKEN_ENV]: CLIENT_TOKEN },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    let signalled = false;
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`timed out waiting for ${JSON.stringify(marker)}; stderr was:\n${stderr}`);
+    }, 60_000);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+      if (signalled || !stderr.includes(marker)) return;
+      signalled = true;
+      child.kill(signal);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (status) => {
+      clearTimeout(timer);
+      resolve({ status, stderr });
+    });
+  });
+}
+
 /** Starts an agent from `serversBlock` and waits for the tunnel to be connected. */
 async function startAgent(serversBlock: string, options: { logFile?: string } = {}): Promise<ClientApp> {
   const path = writeConfig(configYaml(serversBlock, options));
