@@ -252,7 +252,7 @@ describe('filesystem config rules', () => {
     });
     expect(check.errors).toEqual([]);
     expect(check.config?.filesystem.enabled).toBe(true);
-    expect([...check.config?.servers.keys() ?? []]).toEqual(['time', 'postgres']);
+    expect([...check.config?.servers.keys() ?? []]).toEqual(['memory', 'postgres']);
   });
 
   it('rejects an enabled filesystem server with no roots', () => {
