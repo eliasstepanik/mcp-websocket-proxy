@@ -155,8 +155,8 @@ Run through this once after installing, and again after any change to the config
    code never runs and the children are cleaned up because their stdin pipe
    closes — an MCP stdio server exits on stdin EOF. The `taskkill /T /F /PID <pid>`
    tree kill (which is what stops an `npx.cmd` shim from orphaning its `node.exe`
-   grandchild) runs on the **foreground** path, i.e. Ctrl+C in step 3 of the
-   "Validate before running" section. Check both: Ctrl+C a foreground run and
+   grandchild) runs on the **foreground** path — the Ctrl+C run in
+   "Validate before running" above. Check both: Ctrl+C a foreground run and
    `Stop-ScheduledTask` the task, and in neither case may a `node.exe` survive.
    If one does, note its pid and parent pid (`tasklist /V` / Task Manager →
    Details → "Parent process") and report it.
