@@ -208,6 +208,37 @@ Should not happen (the task ignores a second start). If it does — e.g. a
 foreground run next to the task — stop one: the tunnel accepts both, but each
 `npx` child is started twice and the servers appear twice on `GET /status`.
 
+**The task registered with `S4U` but never runs (`LastTaskResult: 0x80070569`)**
+`0x80070569` is `LOGON_FAILURE`: registration succeeded, but the account lacks
+the "Log on as a batch job" user right, so the run-time logon fails. Group
+policy on a work PC usually grants it or withholds it, and it is not something a
+non-elevated prompt can change. Re-register on the interactive session:
+
+```powershell
+.\scripts\install-task.ps1 -LogonType Interactive -Force
+```
+
+The task then lives and dies with your desktop session: it stops at logoff and
+the At-log-on trigger brings it back at the next logon.
+
+**Roots on a share or a mapped drive do not work under `S4U`**
+`S4U` gives the task a token but **no network credentials**: it authenticates
+locally only. A `filesystem.roots` entry (or a server's working directory) on
+`smb://server/share` or a mapped drive letter therefore fails with a permission
+or "path not found" error, even though the same path works in your shell —
+mapped drive letters in particular are per-session and do not exist in the task's
+session. Keep roots on local paths, or run with `-LogonType Interactive -Force`
+(or `-LogonType Password` with `-Credential`) when a share must be reached.
+
+**A console window appears when the task runs**
+That means the task is registered as `Interactive` (the fallback, or something
+you asked for). `-Hidden` only hides the task in the Task Scheduler UI, not a
+window: an interactive task shows a console for the whole run. Under `S4U` the
+task runs in its own session and no window ever appears. To keep the window off
+screen in the interactive case, register the action as
+`conhost.exe --headless node.exe …` (Windows 11 22H2+), or accept the window —
+closing it kills the agent.
+
 **Uninstall**
 `.\scripts\uninstall-task.ps1`, then kill any client process still running
 (`tasklist` / Task Manager). The config file and log file are left alone.
