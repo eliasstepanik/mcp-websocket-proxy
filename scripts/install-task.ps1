@@ -204,12 +204,13 @@ try {
     Write-Warning "S4U registration failed ($($_.Exception.Message)); retrying with -LogonType Interactive."
     Write-Warning 'The task will then stop at logoff and start again at the next logon.'
     $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Limited
+    $EffectiveLogonType = 'Interactive'
     $task = Register-ScheduledTask @common -Principal $Principal
 }
 
 Write-Host "registered '$TaskName'"
 Write-Host "  run:      $($Action.Execute) $($ArgumentList -join ' ')"
-Write-Host "  trigger:  at log on ($UserId), restart on failure: 3x / 1 min"
-Write-Host "  logon:    $LogonType"
+Write-Host "  trigger:  at log on ($UserId) + every 5 min, restart on failure: 3x / 1 min"
+Write-Host "  logon:    $EffectiveLogonType"
 Write-Host "start it now with:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "check it with:      Get-ScheduledTask -TaskName '$TaskName' | Get-ScheduledTaskInfo"
