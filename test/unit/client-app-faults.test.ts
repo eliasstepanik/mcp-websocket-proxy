@@ -72,7 +72,7 @@ function writeConfig(text: string): string {
   const path = join(dir, 'config.yaml');
   // `writeFileSync` comes from the mocked module, which spreads the real `node:fs`
   // and only replaces the four calls `app.ts` makes.
-  realFs.writeFileSync(path, text, 'utf8');
+  writeFileSync(path, text, 'utf8');
   return path;
 }
 
