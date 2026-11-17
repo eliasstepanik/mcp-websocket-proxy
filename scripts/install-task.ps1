@@ -172,6 +172,10 @@ if ($LogonType -eq 'Password') {
     $Principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel Limited
 }
 
+# The logon type the task actually ends up registered with; S4U falls back to
+# Interactive below when registration is refused.
+$EffectiveLogonType = $LogonType
+
 $Description = 'MCP WebSocket Proxy client: exposes this PC''s local MCP servers to Warren over an outbound tunnel.'
 
 # --- register ----------------------------------------------------------------
