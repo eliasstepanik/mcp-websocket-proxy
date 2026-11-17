@@ -47,12 +47,16 @@ const { loadClientConfig } = await import('../../src/client/config.js');
 
 const TOKEN = 'faults-client-token-aaaaaaaaaaaaaaaa';
 const TOKEN_ENV = 'FAULTS_TEST_TOKEN';
+/** A command that cannot be spawned: its first start fails immediately. */
+const BROKEN_COMMAND = 'definitely-not-a-real-command-xyz';
+/** The real fixture used by the other integration tests: starts cleanly. */
+const FIXTURE = new URL('../fixtures/fake-mcp-server.mjs', import.meta.url).pathname;
 
 let dir = '';
 let stderrLines: string[] = [];
 
 /** A config document with one server and the filesystem server enabled. */
-function configText(): string {
+function configText(command: string, args: string[]): string {
   return [
     'server:',
     '  url: ws://127.0.0.1:1/tunnel',
@@ -62,8 +66,8 @@ function configText(): string {
     'filesystem: { enabled: true, roots: ["/tmp"] }',
     'servers:',
     '  alpha:',
-    '    command: node',
-    '    args: []',
+    `    command: ${JSON.stringify(command)}`,
+    `    args: [${args.map((arg) => JSON.stringify(arg)).join(', ')}]`,
     '',
   ].join('\n');
 }
