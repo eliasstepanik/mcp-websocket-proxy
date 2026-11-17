@@ -83,9 +83,12 @@ node .\dist\client\main.js
 
 That registers `McpWebsocketProxyClient` for the current user:
 
-- **trigger** at log on, current user only;
+- **trigger** at log on, current user only, **plus a repeat every 5 minutes**
+  indefinitely — with "do not start a new instance" that repeat is a watchdog:
+  every tick is a no-op while the agent runs and a restart when it does not;
 - **action** `node <RepoRoot>\dist\client\main.js --config <ConfigPath>`;
-- **hidden**, no console window;
+- **hidden** in the Task Scheduler UI (with `S4U` no console window appears at
+  all; see Troubleshooting for the `Interactive` fallback);
 - **restart on failure**: 3 attempts, 1 minute apart;
 - **no execution time limit** — Task Scheduler never kills a healthy agent;
 - **"do not start a new instance if one is running"**, so a second logon cannot
