@@ -103,6 +103,16 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
   if (options.check) {
     const result = checkConfig(options.configPath, env);
     if (result.ok) {
+      // `--check` is the install task's gate, so it must also catch a broken
+      // built-in filesystem server: the same bin resolution `startClientApp` does,
+      // without starting anything.
+      try {
+        if (loadClientConfig(options.configPath, env).filesystem.enabled) filesystemServerPath();
+      } catch (error) {
+        process.stderr.write(`config invalid: ${options.configPath}\n`);
+        process.stderr.write(`- ${(error as Error).message}\n`);
+        return 1;
+      }
       process.stdout.write('config ok\n');
       return 0;
     }
@@ -111,42 +121,66 @@ export async function run(argv: readonly string[], env: NodeJS.ProcessEnv = proc
     return 1;
   }
 
-  let app: ClientApp;
+  let app: ClientApp | undefined;
+  let startupDone = false;
+  /** A signal that arrived while `startClientApp` was still running. */
+  let pendingSignal: NodeJS.Signals | undefined;
+  let closing: Promise<void> | undefined;
+  let resolveClosed: () => void = () => undefined;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const close = (): void => {
+    if (!app) return;
+    if (!closing) {
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      closing = app.close();
+    }
+    void closing.then(
+      () => resolveClosed(),
+      () => {
+        process.stderr.write('fatal: shutdown failed\n');
+        process.exitCode = 1;
+        resolveClosed();
+      },
+    );
+  };
+
+  // The agent has no natural end: it runs until a signal, then shuts the tunnel
+  // and the children down and exits 0 so a supervisor sees a clean stop.
+  const onSignal = (signal: NodeJS.Signals): void => {
+    process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), level: 'info', message: 'signal', signal })}\n`);
+    if (!startupDone) {
+      // Ctrl+C *during* startup: remember it and shut down as soon as the agent
+      // exists, so a half-started agent never outlives the terminal that started it.
+      pendingSignal = signal;
+      return;
+    }
+    close();
+  };
+  // Installed before startup begins: a signal that arrives while the children are
+  // still being spawned must be caught rather than take the process down with its
+  // default disposition, which would leave the children behind.
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+
   try {
     const config = loadClientConfig(options.configPath, env);
     app = await startClientApp(config);
   } catch (error) {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
     // ConfigError messages name the offending variable, never its value.
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`${error instanceof ConfigError ? 'config error: ' : 'fatal: '}${message}\n`);
     return 1;
   }
 
-  let closing: Promise<void> | undefined;
-  const closed = new Promise<void>((resolve) => {
-    const close = (): Promise<void> => {
-      if (!closing) {
-        process.off('SIGINT', onSignal);
-        process.off('SIGTERM', onSignal);
-        closing = app.close();
-      }
-      return closing;
-    };
-    // The agent has no natural end: it runs until a signal, then shuts the tunnel
-    // and the children down and exits 0 so a supervisor sees a clean stop.
-    const onSignal = (signal: NodeJS.Signals): void => {
-      process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), level: 'info', message: 'signal', signal })}\n`);
-      void close()
-        .then(() => resolve())
-        .catch(() => {
-          process.stderr.write('fatal: shutdown failed\n');
-          process.exitCode = 1;
-          resolve();
-        });
-    };
-    process.on('SIGINT', onSignal);
-    process.on('SIGTERM', onSignal);
-  });
+  startupDone = true;
+  // A signal that arrived during startup is handled now that there is something to close.
+  if (pendingSignal !== undefined) close();
   await closed;
   return process.exitCode === 1 ? 1 : 0;
 }
