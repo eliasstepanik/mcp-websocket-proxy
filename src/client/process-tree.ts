@@ -114,11 +114,13 @@ async function descendants(pid: number, depth = 0): Promise<number[]> {
  * Kill `pid` and everything below it. Resolves when the sweep is done, whether
  * or not anything was killed.
  *
- * @param pid The pid of a *child* of this process (never this process itself:
- *            a self-pid is ignored rather than killing the agent).
+ * @param pid The pid of a *child* of this process (never this process itself, and
+ *            never pid 1 — `init`/`docker-init`: killing it takes the machine or
+ *            the container with it. Both are ignored rather than acted on).
  */
 export async function killProcessTree(pid: number): Promise<void> {
   if (!Number.isInteger(pid) || pid <= 0) return;
+  if (pid === 1) return;
   if (pid === process.pid) return;
 
   if (process.platform === 'win32') {
