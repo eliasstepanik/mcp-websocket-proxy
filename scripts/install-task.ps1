@@ -92,22 +92,27 @@ if ([string]::IsNullOrWhiteSpace($NodePath)) {
     if (-not $onPath) {
         throw 'node.exe was not found on PATH; install Node 24+ or pass -NodePath C:\path\to\node.exe'
     }
-    $NodePath = $onPath.Source
+    $NodePath = [string] $onPath.Source
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     # scripts\install-task.ps1 lives one level below the repository root.
-    $RepoRoot = Split-Path -Parent $PSScriptRoot
+    $RepoRoot = [string] (Split-Path -Parent $PSScriptRoot)
 }
 
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
-    $ConfigPath = Join-Path $env:APPDATA 'mcp-websocket-proxy\config.yaml'
+    $ConfigPath = [string] (Join-Path $env:APPDATA 'mcp-websocket-proxy\config.yaml')
 }
 
-$NodePath = (Resolve-Path -LiteralPath $NodePath).Path
-$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+# New-ScheduledTaskAction takes plain [string] for -Execute, -Argument and
+# -WorkingDirectory; keep everything a System.String so no FileInfo/DirectoryInfo
+# ever reaches the cmdlet (PowerShell 5.1 cannot coerce those and fails with
+# ParameterBindingArgumentTransformationException).
+$NodePath = [string] (Resolve-Path -LiteralPath $NodePath).Path
+$RepoRoot = [string] (Resolve-Path -LiteralPath $RepoRoot).Path
+$ConfigPath = [string] $ConfigPath
 
-$Entry = Join-Path $RepoRoot 'dist\client\main.js'
+$Entry = [string] (Join-Path $RepoRoot 'dist\client\main.js')
 if (-not (Test-Path -LiteralPath $Entry)) {
     throw "cannot find $Entry - run `npm ci` and `npm run build` in $RepoRoot first."
 }
@@ -123,8 +128,12 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
 
 # --- task definition ---------------------------------------------------------
 
-$ArgumentList = @("`"$Entry`"", '--config', "`"$ConfigPath`"")
-$Action = New-ScheduledTaskAction -Execute $NodePath -Argument $ArgumentList -WorkingDirectory $RepoRoot
+# -Argument must be ONE double-quoted string, not an array: New-ScheduledTaskAction
+# -Argument is typed [string] and an array (or a non-string object) fails to bind
+# on PowerShell 5.1. Every path is wrapped in embedded quotes so paths with spaces
+# (e.g. C:\Users\me\OneDrive - Volkswagen AG\repo) survive.
+$ArgumentString = '"' + $Entry + '" --config "' + $ConfigPath + '"'
+$Action = New-ScheduledTaskAction -Execute $NodePath -Argument $ArgumentString -WorkingDirectory ([string] $RepoRoot)
 
 $UserId = "$env:USERDOMAIN\$env:USERNAME"
 $AtLogOnTrigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
@@ -209,7 +218,7 @@ try {
 }
 
 Write-Host "registered '$TaskName'"
-Write-Host "  run:      $($Action.Execute) $($ArgumentList -join ' ')"
+Write-Host "  run:      $($Action.Execute) $ArgumentString"
 Write-Host "  trigger:  at log on ($UserId) + every 5 min, restart on failure: 3x / 1 min"
 Write-Host "  logon:    $EffectiveLogonType"
 Write-Host "start it now with:  Start-ScheduledTask -TaskName '$TaskName'"
