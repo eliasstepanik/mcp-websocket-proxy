@@ -150,13 +150,21 @@ Run through this once after installing, and again after any change to the config
    ```
 
    Nothing from the agent's tree may remain — in particular no `node.exe` whose
-   parent was the `npx.cmd` shim. On Windows the client kills each child's whole
-   process tree with `taskkill /T /F /PID <pid>` during shutdown precisely so an
-   `npx.cmd` shim cannot leave its `node.exe` grandchild behind; if you see a
-   leftover, note its pid and parent pid (`tasklist /V` / Task Manager → Details
-   → "Parent process") and report it.
+   parent was the `npx.cmd` shim. Stopping a scheduled task does **not** deliver
+   a signal: Task Scheduler terminates the agent, so the client's own shutdown
+   code never runs and the children are cleaned up because their stdin pipe
+   closes — an MCP stdio server exits on stdin EOF. The `taskkill /T /F /PID <pid>`
+   tree kill (which is what stops an `npx.cmd` shim from orphaning its `node.exe`
+   grandchild) runs on the **foreground** path, i.e. Ctrl+C in step 3 of the
+   "Validate before running" section. Check both: Ctrl+C a foreground run and
+   `Stop-ScheduledTask` the task, and in neither case may a `node.exe` survive.
+   If one does, note its pid and parent pid (`tasklist /V` / Task Manager →
+   Details → "Parent process") and report it.
 6. **It restarts after a crash.** `taskkill /PID <agent-pid> /F`, wait a minute:
    Task Scheduler restarts it (up to 3 times) and the log shows a new `starting`.
+   This is now also covered by the 5-minute repeat trigger: even after the 3
+   scheduled restart attempts are used up, the next tick within 5 minutes starts
+   the agent again.
 
 ## Troubleshooting
 
